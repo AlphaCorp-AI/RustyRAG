@@ -2,7 +2,8 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
-    // pub database_url: String,
+    pub database_url: String,
+    pub jwt_secret: String,
     pub openrouter_api_key: String,
     pub host: String,
     pub port: u16,

@@ -8,8 +8,17 @@ pub enum AppError {
     #[error("Bad request: {0}")]
     BadRequest(String),
 
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
+
+    #[error("Conflict: {0}")]
+    Conflict(String),
+
     #[error("LLM error: {0}")]
     LlmError(String),
+
+    #[error("Database error: {0}")]
+    Database(#[from] sqlx::Error),
 
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
@@ -17,18 +26,28 @@ pub enum AppError {
 
 impl ResponseError for AppError {
     fn error_response(&self) -> HttpResponse {
-        match self {
-            AppError::NotFound(msg) => {
-                HttpResponse::NotFound().json(serde_json::json!({"error": msg}))
+        let (status, msg) = match self {
+            AppError::NotFound(msg) => (actix_web::http::StatusCode::NOT_FOUND, msg.clone()),
+            AppError::BadRequest(msg) => (actix_web::http::StatusCode::BAD_REQUEST, msg.clone()),
+            AppError::Unauthorized(msg) => (actix_web::http::StatusCode::UNAUTHORIZED, msg.clone()),
+            AppError::Conflict(msg) => (actix_web::http::StatusCode::CONFLICT, msg.clone()),
+            AppError::LlmError(msg) => (actix_web::http::StatusCode::BAD_GATEWAY, msg.clone()),
+            AppError::Database(e) => {
+                tracing::error!("Database error: {e:?}");
+                (
+                    actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal server error".into(),
+                )
             }
-            AppError::BadRequest(msg) => {
-                HttpResponse::BadRequest().json(serde_json::json!({"error": msg}))
+            AppError::Internal(e) => {
+                tracing::error!("Internal error: {e:?}");
+                (
+                    actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal server error".into(),
+                )
             }
-            AppError::LlmError(msg) => {
-                HttpResponse::BadGateway().json(serde_json::json!({"error": msg}))
-            }
-            AppError::Internal(_) => HttpResponse::InternalServerError()
-                .json(serde_json::json!({"error": "Internal server error"})),
-        }
+        };
+
+        HttpResponse::build(status).json(serde_json::json!({ "error": msg }))
     }
 }

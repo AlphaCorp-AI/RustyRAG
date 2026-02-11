@@ -1,1 +1,1 @@
-// Middleware module — will hold auth, rate-limiting, etc.
+pub mod auth;

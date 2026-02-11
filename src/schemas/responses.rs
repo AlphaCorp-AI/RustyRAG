@@ -1,5 +1,9 @@
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use utoipa::ToSchema;
+use uuid::Uuid;
+
+// ── Chat ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ChatResponse {
@@ -19,6 +23,8 @@ pub struct Usage {
     pub total_tokens: u32,
 }
 
+// ── Health ──────────────────────────────────────────────────────────
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct HealthResponse {
     #[schema(example = "ok")]
@@ -26,6 +32,26 @@ pub struct HealthResponse {
     #[schema(example = "0.1.0")]
     pub version: String,
 }
+
+// ── Users ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct UserResponse {
+    pub id: Uuid,
+    pub name: String,
+    pub email: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TokenResponse {
+    /// Bearer JWT token
+    pub access_token: String,
+    pub token_type: String,
+}
+
+// ── Generic ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ErrorResponse {

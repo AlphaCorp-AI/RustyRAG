@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AlphaRust Chat</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e4e4e7;
+    --text-muted: #71717a;
+    --blue: #3b82f6;
+    --blue-dark: #2563eb;
+    --user-bg: #1e3a5f;
+    --assistant-bg: #1a1d27;
+  }
+
+  html, body {
+    height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    max-width: 800px;
+    margin: 0 auto;
+  }
+
+  /* ── Header ─────────────────────────── */
+  header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    text-align: center;
+    flex-shrink: 0;
+  }
+  header h1 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--blue);
+    margin-bottom: 10px;
+  }
+
+  .settings-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .settings-bar label {
+    font-size: 13px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .settings-bar input {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    width: 200px;
+    transition: border-color 0.15s;
+  }
+
+  .settings-bar input:focus {
+    border-color: var(--blue);
+  }
+
+  .settings-bar input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .settings-bar .rag-badge {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    transition: all 0.2s;
+  }
+
+  .settings-bar .rag-badge.active {
+    background: rgba(59, 130, 246, 0.2);
+    color: var(--blue);
+  }
+
+  .settings-bar .rag-badge.inactive {
+    background: rgba(113, 113, 122, 0.15);
+    color: var(--text-muted);
+  }
+
+  /* ── Messages ───────────────────────── */
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .msg {
+    max-width: 85%;
+    padding: 12px 16px;
+    border-radius: 12px;
+    font-size: 15px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+
+  .msg.user {
+    align-self: flex-end;
+    background: var(--user-bg);
+    border: 1px solid var(--blue-dark);
+    border-bottom-right-radius: 4px;
+  }
+
+  .msg.assistant {
+    align-self: flex-start;
+    background: var(--assistant-bg);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+  }
+
+  .msg .meta {
+    display: flex;
+    gap: 12px;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .msg .meta span {
+    background: rgba(59, 130, 246, 0.1);
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+
+  /* ── Sources panel ──────────────────── */
+  .sources-panel {
+    margin-top: 10px;
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+  }
+
+  .sources-toggle {
+    font-size: 12px;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .sources-toggle:hover { color: var(--blue); }
+
+  .sources-list {
+    display: none;
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+
+  .sources-list.open { display: block; }
+
+  .source-item {
+    padding: 6px 8px;
+    margin-bottom: 4px;
+    background: rgba(59, 130, 246, 0.05);
+    border-radius: 4px;
+    border-left: 2px solid var(--blue);
+  }
+
+  .source-item .source-file {
+    font-weight: 600;
+    color: var(--blue);
+    font-size: 11px;
+  }
+
+  .source-item .source-score {
+    font-size: 11px;
+    opacity: 0.7;
+    margin-left: 6px;
+  }
+
+  .source-item .source-text {
+    margin-top: 2px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* ── Input area ─────────────────────── */
+  #input-area {
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  #input-form {
+    display: flex;
+    gap: 10px;
+  }
+
+  #input-form textarea {
+    flex: 1;
+    resize: none;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    color: var(--text);
+    font-size: 15px;
+    font-family: inherit;
+    line-height: 1.4;
+    outline: none;
+    transition: border-color 0.15s;
+    max-height: 120px;
+  }
+
+  #input-form textarea:focus {
+    border-color: var(--blue);
+  }
+
+  #input-form textarea::placeholder {
+    color: var(--text-muted);
+  }
+
+  #input-form button {
+    align-self: flex-end;
+    background: var(--blue);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    padding: 12px 20px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+
+  #input-form button:hover { background: var(--blue-dark); }
+  #input-form button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── Cursor blink ───────────────────── */
+  .cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1em;
+    background: var(--blue);
+    margin-left: 2px;
+    animation: blink 0.8s step-end infinite;
+    vertical-align: text-bottom;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ── Scrollbar ──────────────────────── */
+  #messages::-webkit-scrollbar { width: 6px; }
+  #messages::-webkit-scrollbar-track { background: transparent; }
+  #messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>AlphaRust Chat</h1>
+    <div class="settings-bar">
+      <label for="collection">Collection:</label>
+      <input type="text" id="collection" placeholder="empty = plain chat" />
+      <span id="rag-badge" class="rag-badge inactive">STREAM</span>
+    </div>
+  </header>
+  <div id="messages"></div>
+  <div id="input-area">
+    <form id="input-form">
+      <textarea id="input" rows="1" placeholder="Send a message..." autofocus></textarea>
+      <button type="submit" id="send-btn">Send</button>
+    </form>
+  </div>
+</div>
+
+<script>
+const STREAM_API = '/api/v1/chat/stream';
+const RAG_STREAM_API = '/api/v1/chat-rag/stream';
+const messagesEl = document.getElementById('messages');
+const inputEl = document.getElementById('input');
+const sendBtn = document.getElementById('send-btn');
+const form = document.getElementById('input-form');
+const collectionEl = document.getElementById('collection');
+const ragBadge = document.getElementById('rag-badge');
+
+// Update badge when collection input changes
+collectionEl.addEventListener('input', () => {
+  const hasCollection = collectionEl.value.trim().length > 0;
+  ragBadge.textContent = hasCollection ? 'RAG' : 'CHAT';
+  ragBadge.className = 'rag-badge ' + (hasCollection ? 'active' : 'inactive');
+});
+
+// Auto-resize textarea
+inputEl.addEventListener('input', () => {
+  inputEl.style.height = 'auto';
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
+});
+
+// Enter to send (Shift+Enter for newline)
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    form.dispatchEvent(new Event('submit'));
+  }
+});
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const text = inputEl.value.trim();
+  if (!text) return;
+
+  const collection = collectionEl.value.trim();
+  const isRag = collection.length > 0;
+
+  // Pick endpoint & body
+  const url = isRag ? RAG_STREAM_API : STREAM_API;
+  const payload = isRag
+    ? { message: text, collection_name: collection, limit: 3 }
+    : { message: text };
+
+  // Add user message
+  addMessage('user', text);
+  inputEl.value = '';
+  inputEl.style.height = 'auto';
+  sendBtn.disabled = true;
+
+  // Create assistant bubble with cursor
+  const { bubble, contentSpan } = addAssistantBubble();
+
+  const t0 = performance.now();
+  let ttft = null;
+  let sources = null;
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      contentSpan.textContent = `Error: ${err}`;
+      removeCursor(bubble);
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let currentEvent = null; // track SSE event type
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // Process complete SSE lines
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // keep incomplete line in buffer
+
+      for (const line of lines) {
+        // Track named events (e.g. "event: sources")
+        if (line.startsWith('event: ')) {
+          currentEvent = line.slice(7).trim();
+          continue;
+        }
+
+        if (!line.startsWith('data: ')) {
+          // Empty line resets event type per SSE spec
+          if (line.trim() === '') currentEvent = null;
+          continue;
+        }
+
+        const payloadStr = line.slice(6).trim();
+        if (payloadStr === '[DONE]') continue;
+
+        // Handle custom "sources" event from RAG stream
+        if (currentEvent === 'sources') {
+          try {
+            sources = JSON.parse(payloadStr);
+          } catch (_) {}
+          currentEvent = null;
+          continue;
+        }
+
+        // Standard LLM delta
+        try {
+          const json = JSON.parse(payloadStr);
+          const delta = json.choices?.[0]?.delta?.content;
+          if (delta) {
+            if (ttft === null) ttft = performance.now() - t0;
+            contentSpan.textContent += delta;
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+          }
+        } catch (_) { /* skip malformed JSON */ }
+      }
+    }
+
+    const totalMs = performance.now() - t0;
+
+    // Remove cursor, add timing metadata
+    removeCursor(bubble);
+    addMeta(bubble, ttft, totalMs);
+
+    // Show sources panel if RAG
+    if (sources && sources.length > 0) {
+      addSourcesPanel(bubble, sources);
+    }
+
+  } catch (err) {
+    contentSpan.textContent = `Connection error: ${err.message}`;
+    removeCursor(bubble);
+  } finally {
+    sendBtn.disabled = false;
+    inputEl.focus();
+  }
+});
+
+function addMessage(role, text) {
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.textContent = text;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function addAssistantBubble() {
+  const bubble = document.createElement('div');
+  bubble.className = 'msg assistant';
+  const contentSpan = document.createElement('span');
+  contentSpan.className = 'content';
+  const cursor = document.createElement('span');
+  cursor.className = 'cursor';
+  bubble.appendChild(contentSpan);
+  bubble.appendChild(cursor);
+  messagesEl.appendChild(bubble);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return { bubble, contentSpan };
+}
+
+function removeCursor(bubble) {
+  const c = bubble.querySelector('.cursor');
+  if (c) c.remove();
+}
+
+function addMeta(bubble, ttft, totalMs) {
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  if (ttft !== null) {
+    const s1 = document.createElement('span');
+    s1.textContent = `TTFT: ${(ttft / 1000).toFixed(2)}s`;
+    meta.appendChild(s1);
+  }
+  const s2 = document.createElement('span');
+  s2.textContent = `Total: ${(totalMs / 1000).toFixed(2)}s`;
+  meta.appendChild(s2);
+  bubble.appendChild(meta);
+}
+
+function addSourcesPanel(bubble, sources) {
+  const panel = document.createElement('div');
+  panel.className = 'sources-panel';
+
+  const toggle = document.createElement('span');
+  toggle.className = 'sources-toggle';
+  toggle.innerHTML = `&#9654; ${sources.length} source${sources.length > 1 ? 's' : ''}`;
+  panel.appendChild(toggle);
+
+  const list = document.createElement('div');
+  list.className = 'sources-list';
+
+  for (const src of sources) {
+    const item = document.createElement('div');
+    item.className = 'source-item';
+
+    const file = document.createElement('span');
+    file.className = 'source-file';
+    file.textContent = src.source_file;
+
+    const score = document.createElement('span');
+    score.className = 'source-score';
+    score.textContent = `(${(src.score * 100).toFixed(1)}%)`;
+
+    const text = document.createElement('div');
+    text.className = 'source-text';
+    text.textContent = src.text;
+
+    item.appendChild(file);
+    item.appendChild(score);
+    item.appendChild(text);
+    list.appendChild(item);
+  }
+
+  panel.appendChild(list);
+  bubble.appendChild(panel);
+
+  toggle.addEventListener('click', () => {
+    const open = list.classList.toggle('open');
+    toggle.innerHTML = `${open ? '&#9660;' : '&#9654;'} ${sources.length} source${sources.length > 1 ? 's' : ''}`;
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  });
+}
+</script>
+</body>
+</html>

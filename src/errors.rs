@@ -17,6 +17,15 @@ pub enum AppError {
     #[error("LLM error: {0}")]
     LlmError(String),
 
+    #[error("Milvus error: {0}")]
+    MilvusError(String),
+
+    #[error("Embedding error: {0}")]
+    EmbeddingError(String),
+
+    #[error("Document processing error: {0}")]
+    DocumentError(String),
+
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
 
@@ -29,9 +38,29 @@ impl ResponseError for AppError {
         let (status, msg) = match self {
             AppError::NotFound(msg) => (actix_web::http::StatusCode::NOT_FOUND, msg.clone()),
             AppError::BadRequest(msg) => (actix_web::http::StatusCode::BAD_REQUEST, msg.clone()),
-            AppError::Unauthorized(msg) => (actix_web::http::StatusCode::UNAUTHORIZED, msg.clone()),
+            AppError::Unauthorized(msg) => {
+                (actix_web::http::StatusCode::UNAUTHORIZED, msg.clone())
+            }
             AppError::Conflict(msg) => (actix_web::http::StatusCode::CONFLICT, msg.clone()),
             AppError::LlmError(msg) => (actix_web::http::StatusCode::BAD_GATEWAY, msg.clone()),
+            AppError::MilvusError(msg) => {
+                tracing::error!("Milvus error: {msg}");
+                (
+                    actix_web::http::StatusCode::BAD_GATEWAY,
+                    format!("Vector DB error: {msg}"),
+                )
+            }
+            AppError::EmbeddingError(msg) => {
+                tracing::error!("Embedding error: {msg}");
+                (
+                    actix_web::http::StatusCode::BAD_GATEWAY,
+                    format!("Embedding error: {msg}"),
+                )
+            }
+            AppError::DocumentError(msg) => (
+                actix_web::http::StatusCode::UNPROCESSABLE_ENTITY,
+                msg.clone(),
+            ),
             AppError::Database(e) => {
                 tracing::error!("Database error: {e:?}");
                 (

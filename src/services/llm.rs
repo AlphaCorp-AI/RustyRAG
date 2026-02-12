@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 
-const DEFAULT_MODEL: &str = "openai/gpt-oss-20b";
+const DEFAULT_MODEL: &str = "openai/gpt-oss-safeguard-20b";
 
 // ── OpenRouter request/response shapes ──────────────────────────────
 
@@ -14,6 +14,8 @@ struct ChatCompletionRequest {
     messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     provider: Option<ProviderPreferences>,
 }
@@ -84,15 +86,116 @@ impl LlmClient {
         model: Option<&str>,
         max_tokens: Option<u32>,
     ) -> anyhow::Result<ChatResult> {
+        self.chat_with_messages(
+            &[Message {
+                role: "user".into(),
+                content: message.into(),
+            }],
+            model,
+            max_tokens,
+        )
+        .await
+    }
+
+    /// Chat with a system prompt (used for RAG).
+    pub async fn chat_with_system(
+        &self,
+        system_prompt: &str,
+        user_message: &str,
+        model: Option<&str>,
+        max_tokens: Option<u32>,
+    ) -> anyhow::Result<ChatResult> {
+        self.chat_with_messages(
+            &[
+                Message {
+                    role: "system".into(),
+                    content: system_prompt.into(),
+                },
+                Message {
+                    role: "user".into(),
+                    content: user_message.into(),
+                },
+            ],
+            model,
+            max_tokens,
+        )
+        .await
+    }
+
+    /// Stream a chat completion — returns the raw SSE response from OpenRouter.
+    pub async fn chat_stream(&self, message: &str) -> anyhow::Result<reqwest::Response> {
+        self.stream_messages(&[Message {
+            role: "user".into(),
+            content: message.into(),
+        }])
+        .await
+    }
+
+    /// Stream a chat completion with a system prompt (used for RAG streaming).
+    pub async fn chat_stream_with_system(
+        &self,
+        system_prompt: &str,
+        user_message: &str,
+    ) -> anyhow::Result<reqwest::Response> {
+        self.stream_messages(&[
+            Message {
+                role: "system".into(),
+                content: system_prompt.into(),
+            },
+            Message {
+                role: "user".into(),
+                content: user_message.into(),
+            },
+        ])
+        .await
+    }
+
+    /// Internal: stream arbitrary messages, returning the raw SSE response.
+    async fn stream_messages(&self, messages: &[Message]) -> anyhow::Result<reqwest::Response> {
+        let body = ChatCompletionRequest {
+            model: DEFAULT_MODEL.to_string(),
+            messages: messages.to_vec(),
+            max_tokens: None,
+            stream: Some(true),
+            provider: Some(ProviderPreferences {
+                order: vec!["Groq".into()],
+            }),
+        };
+
+        let res = self
+            .http
+            .post("https://openrouter.ai/api/v1/chat/completions")
+            .bearer_auth(&self.config.openrouter_api_key)
+            .header("HTTP-Referer", "https://alpharust.local")
+            .header("X-Title", "alpharust")
+            .json(&body)
+            .send()
+            .await
+            .context("Failed to reach OpenRouter")?;
+
+        let status = res.status();
+        if !status.is_success() {
+            let text = res.text().await.unwrap_or_default();
+            anyhow::bail!("OpenRouter returned {status}: {text}");
+        }
+
+        Ok(res)
+    }
+
+    /// Internal: send arbitrary messages to the LLM.
+    async fn chat_with_messages(
+        &self,
+        messages: &[Message],
+        model: Option<&str>,
+        max_tokens: Option<u32>,
+    ) -> anyhow::Result<ChatResult> {
         let model_id: String = model.unwrap_or(DEFAULT_MODEL).to_string();
 
         let body = ChatCompletionRequest {
             model: model_id.clone(),
-            messages: vec![Message {
-                role: "user".into(),
-                content: message.into(),
-            }],
+            messages: messages.to_vec(),
             max_tokens,
+            stream: None,
             provider: Some(ProviderPreferences {
                 order: vec!["Groq".into()],
             }),

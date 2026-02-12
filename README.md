@@ -57,15 +57,15 @@ Most RAG stacks glue together Python microservices with high per-request overhea
                        │       ┌───────────────▼───────────────┘          │
                        │       │                                          │
                        │  ┌────▼────────┐  ┌──────────────┐               │
-                       │  │   Milvus    │  │  PostgreSQL   │              │
-                       │  │ HNSW Index  │  │  Users/Auth   │              │
+                       │  │   Milvus    │  │  PostgreSQL  │               │
+                       │  │ HNSW Index  │  │  Users/Auth  │               │
                        │  └─────────────┘  └──────────────┘               │
                        └──────────────────────────────────────────────────┘
                                           │
                               ┌────────────────────────┐
-                              │    OpenRouter API       │
-                              │  LLM + Embeddings       │
-                              │  (one key, 200+ models) │
+                              │    OpenRouter API      │
+                              │  LLM + Embeddings      │
+                              │  (one key, 200+ models)│
                               └────────────────────────┘
 ```
 

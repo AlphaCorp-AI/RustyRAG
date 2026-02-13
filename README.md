@@ -209,7 +209,7 @@ Upload a document, type a question with a collection name, and watch tokens stre
 AlphaRust ships with **`openai/gpt-oss-20b`** as the default model, running on **[Groq](https://groq.com)**'s LPU inference hardware. This gives you:
 
 - **Extremely low latency** — Groq's LPU delivers tokens faster than GPU-based providers
-- **High quality** — Llama 3.3 70B provides strong reasoning and instruction following
+- **High quality** — gpt-oss-20b provides strong reasoning and instruction following
 - **Simple setup** — just set your `GROQ_API_KEY`
 
 You can override the model per request by passing `"model": "openai/gpt-oss-20b"` (or any other [Groq model](https://console.groq.com/docs/models)) in the `/chat` request body.

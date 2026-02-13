@@ -6,7 +6,7 @@
 
 A high-performance Retrieval-Augmented Generation API that chunks, embeds, stores, and queries documents — then streams LLM answers grounded in your data.
 
-Built by **[Ignas Vaitukaitis](https://www.linkedin.com/in/ignas-vaitukaitis/)** · CEO @ **[AlphaCorp AI](https://alphacorp.ai)**
+Built by **[Ignas Vaitukaitis](https://www.linkedin.com/in/ignas-vaitukaitis/)** · AI Agent Engineer
 
 <br/>
 
@@ -21,6 +21,78 @@ Built by **[Ignas Vaitukaitis](https://www.linkedin.com/in/ignas-vaitukaitis/)**
 <img src="https://img.shields.io/badge/Tokio-463E52?style=for-the-badge&logo=rust&logoColor=white" alt="Tokio"/>
 
 </div>
+
+---
+
+## 🏁 Benchmarks
+
+> Tested on **Azure Standard F4s v2** (4 vCPUs, 8 GiB memory) in **West US**, using **Groq** (`openai/gpt-oss-20b`) for LLM completions and **Cohere** (`embed-english-light-v3.0`) for embeddings.
+>
+> The vector database contains the full **1,000 PDFs** from the [Open RAG Bench dataset](https://www.reddit.com/r/Rag/comments/1nkad09/open_rag_bench_dataset_1000_pdfs_3000_queries/) ([Google Drive](https://drive.google.com/drive/u/1/folders/18q_zokgsrMsL-Xfx4OcYST1DLb8TNzYY)) — totaling **10,250 + 16,968 chunks** (500-word chunk size, 50-word overlap). All answers include **3 sources**.
+
+### Results Summary
+
+| Metric | USA Server (curl localhost) | Brazil Browser → USA Server |
+|--------|----------------------------|-----------------------------|
+| **Time to First Token (TTFT)** | **< 160 ms** | **< 900 ms** |
+| **Total Completion** | **< 700 ms** | **< 1 second** |
+
+### Query 1 — *"Is there an iterative process involved in refining code during collaboration among LLM agents?"*
+
+<table>
+<tr>
+<td><strong>🇺🇸 USA Server (curl)</strong></td>
+<td><strong>🇧🇷 Brazil Browser → USA Server</strong></td>
+</tr>
+<tr>
+<td><img src="docs/benchmarks/1_usa_server.png" alt="Query 1 — USA server curl results" width="500"/></td>
+<td><img src="docs/benchmarks/1_brazil_browser.png" alt="Query 1 — Brazil browser results" width="500"/></td>
+</tr>
+<tr>
+<td>TTFT: 0.150–0.155s · Total: 0.459–0.567s</td>
+<td>TTFT: 0.64–0.78s · Total: 0.67–0.88s</td>
+</tr>
+</table>
+
+### Query 2 — *"Are higher values better for SI-SDR, SDR, PESQ, and STOI metrics?"*
+
+<table>
+<tr>
+<td><strong>🇺🇸 USA Server (curl)</strong></td>
+<td><strong>🇧🇷 Brazil Browser → USA Server</strong></td>
+</tr>
+<tr>
+<td><img src="docs/benchmarks/2_usa_server.png" alt="Query 2 — USA server curl results" width="500"/></td>
+<td><img src="docs/benchmarks/2_brazil_browser.png" alt="Query 2 — Brazil browser results" width="500"/></td>
+</tr>
+<tr>
+<td>TTFT: 0.149–0.150s · Total: 0.506–0.632s</td>
+<td>TTFT: 0.65–0.80s · Total: 0.80–0.84s</td>
+</tr>
+</table>
+
+### Query 3 — *"What is the accuracy of the base NLP model for market return direction?"*
+
+<table>
+<tr>
+<td><strong>🇺🇸 USA Server (curl)</strong></td>
+<td><strong>🇧🇷 Brazil Browser → USA Server</strong></td>
+</tr>
+<tr>
+<td><img src="docs/benchmarks/3_usa_server.png" alt="Query 3 — USA server curl results" width="500"/></td>
+<td><img src="docs/benchmarks/3_brazil_browser.png" alt="Query 3 — Brazil browser results" width="500"/></td>
+</tr>
+<tr>
+<td>TTFT: 0.146–0.149s · Total: 0.601–0.654s</td>
+<td>TTFT: 0.54–0.64s · Total: 0.64–0.81s</td>
+</tr>
+</table>
+
+### 🗺️ Roadmap
+
+- Further optimize TTFT and total completion latency
+- Improve answer accuracy and source relevance
+- Expand benchmark coverage with more query types
 
 ---
 

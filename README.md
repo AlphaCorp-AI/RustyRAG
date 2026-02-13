@@ -270,7 +270,7 @@ docker-compose.yml          # PostgreSQL 16 + Milvus 2.4
 | Layer | Technology | Role |
 |-------|-----------|------|
 | 🦀 **Runtime** | **Rust** + **Tokio** + **Actix-web 4** | Async web server with zero-cost abstractions |
-| 🤖 **LLM** | **Groq** (`llama-3.3-70b-versatile`) | Chat completions + SSE streaming at LPU speed |
+| 🤖 **LLM** | **Groq** (`openai/gpt-oss-20b`) | Chat completions + SSE streaming at LPU speed |
 | 📐 **Embeddings** | **Cohere** Embed v3 (`embed-english-light-v3.0`) | Fast asymmetric document + query vectorization |
 | 🔍 **Vector DB** | **Milvus 2.4** (HNSW, cosine similarity) | Sub-millisecond approximate nearest neighbor search |
 | 🗄️ **Database** | **PostgreSQL 16** + **SQLx** | Users, auth, migrations, compile-time checked queries |

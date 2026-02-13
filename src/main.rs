@@ -49,29 +49,16 @@ async fn main() -> std::io::Result<()> {
     let milvus_client = MilvusClient::new(&config.milvus_url, config.embedding_dimension);
     tracing::info!("Milvus client configured → {}", config.milvus_url);
 
-    // Embedding client (OpenAI-compatible)
-    // Falls back to OpenRouter credentials when EMBEDDING_API_URL / EMBEDDING_API_KEY are not set
-    let embed_url = if config.embedding_api_url.is_empty() {
-        "https://openrouter.ai/api/v1/embeddings".to_string()
-    } else {
-        config.embedding_api_url.clone()
-    };
-    let embed_key = if config.embedding_api_key.is_empty() {
-        config.openrouter_api_key.clone()
-    } else {
-        config.embedding_api_key.clone()
-    };
-
-    let embedding_client = EmbeddingClient::new(&embed_url, &embed_key, &config.embedding_model);
+    // Cohere embedding client
+    let embedding_client = EmbeddingClient::new(&config.cohere_api_key, &config.embedding_model);
     if embedding_client.is_configured() {
         tracing::info!(
-            "Embedding client configured → model={}, url={}",
+            "Cohere embedding client configured → model={}",
             config.embedding_model,
-            embed_url,
         );
     } else {
         tracing::warn!(
-            "Embedding client NOT configured – set EMBEDDING_MODEL to enable document upload"
+            "Cohere embedding client NOT configured – set COHERE_API_KEY to enable document upload"
         );
     }
 

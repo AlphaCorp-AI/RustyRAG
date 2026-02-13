@@ -214,7 +214,7 @@ impl MilvusClient {
             "limit": limit,
             "outputFields": ["text", "source_file", "chunk_index"],
             "searchParams": {
-                "params": { "ef": 128 }
+                "params": { "ef": 64 }
             },
         });
 

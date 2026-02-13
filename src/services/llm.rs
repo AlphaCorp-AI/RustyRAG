@@ -4,9 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 
-const DEFAULT_MODEL: &str = "openai/gpt-oss-safeguard-20b";
-
-// ── OpenRouter request/response shapes ──────────────────────────────
+// ── Groq request/response shapes ────────────────────────────────────
 
 #[derive(Serialize)]
 struct ChatCompletionRequest {
@@ -16,13 +14,6 @@ struct ChatCompletionRequest {
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    provider: Option<ProviderPreferences>,
-}
-
-#[derive(Serialize)]
-struct ProviderPreferences {
-    order: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -78,8 +69,7 @@ impl LlmClient {
         }
     }
 
-    /// Send a chat completion request via OpenRouter.
-    /// Defaults to `openai/gpt-oss-20b` routed through Groq.
+    /// Send a chat completion request via Groq.
     pub async fn chat(
         &self,
         message: &str,
@@ -122,7 +112,7 @@ impl LlmClient {
         .await
     }
 
-    /// Stream a chat completion — returns the raw SSE response from OpenRouter.
+    /// Stream a chat completion — returns the raw SSE response from Groq.
     pub async fn chat_stream(&self, message: &str) -> anyhow::Result<reqwest::Response> {
         self.stream_messages(&[Message {
             role: "user".into(),
@@ -153,30 +143,25 @@ impl LlmClient {
     /// Internal: stream arbitrary messages, returning the raw SSE response.
     async fn stream_messages(&self, messages: &[Message]) -> anyhow::Result<reqwest::Response> {
         let body = ChatCompletionRequest {
-            model: DEFAULT_MODEL.to_string(),
+            model: self.config.llm_model.clone(),
             messages: messages.to_vec(),
             max_tokens: None,
             stream: Some(true),
-            provider: Some(ProviderPreferences {
-                order: vec!["Groq".into()],
-            }),
         };
 
         let res = self
             .http
-            .post("https://openrouter.ai/api/v1/chat/completions")
-            .bearer_auth(&self.config.openrouter_api_key)
-            .header("HTTP-Referer", "https://alpharust.local")
-            .header("X-Title", "alpharust")
+            .post("https://api.groq.com/openai/v1/chat/completions")
+            .bearer_auth(&self.config.groq_api_key)
             .json(&body)
             .send()
             .await
-            .context("Failed to reach OpenRouter")?;
+            .context("Failed to reach Groq")?;
 
         let status = res.status();
         if !status.is_success() {
             let text = res.text().await.unwrap_or_default();
-            anyhow::bail!("OpenRouter returned {status}: {text}");
+            anyhow::bail!("Groq returned {status}: {text}");
         }
 
         Ok(res)
@@ -189,39 +174,36 @@ impl LlmClient {
         model: Option<&str>,
         max_tokens: Option<u32>,
     ) -> anyhow::Result<ChatResult> {
-        let model_id: String = model.unwrap_or(DEFAULT_MODEL).to_string();
+        let model_id: String = model
+            .map(|m| m.to_string())
+            .unwrap_or_else(|| self.config.llm_model.clone());
 
         let body = ChatCompletionRequest {
             model: model_id.clone(),
             messages: messages.to_vec(),
             max_tokens,
             stream: None,
-            provider: Some(ProviderPreferences {
-                order: vec!["Groq".into()],
-            }),
         };
 
         let res = self
             .http
-            .post("https://openrouter.ai/api/v1/chat/completions")
-            .bearer_auth(&self.config.openrouter_api_key)
-            .header("HTTP-Referer", "https://alpharust.local")
-            .header("X-Title", "alpharust")
+            .post("https://api.groq.com/openai/v1/chat/completions")
+            .bearer_auth(&self.config.groq_api_key)
             .json(&body)
             .send()
             .await
-            .context("Failed to reach OpenRouter")?;
+            .context("Failed to reach Groq")?;
 
         let status = res.status();
         if !status.is_success() {
             let text = res.text().await.unwrap_or_default();
-            anyhow::bail!("OpenRouter returned {status}: {text}");
+            anyhow::bail!("Groq returned {status}: {text}");
         }
 
         let data: ChatCompletionResponse = res
             .json()
             .await
-            .context("Failed to parse OpenRouter response")?;
+            .context("Failed to parse Groq response")?;
 
         let content = data
             .choices

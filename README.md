@@ -12,12 +12,12 @@ Built by **[Ignas Vaitukaitis](https://www.linkedin.com/in/ignas-vaitukaitis/)**
 
 <img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Rust"/>
 <img src="https://img.shields.io/badge/Actix--web-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Actix-web"/>
-<img src="https://img.shields.io/badge/OpenRouter-6366F1?style=for-the-badge&logo=openai&logoColor=white" alt="OpenRouter"/>
+<img src="https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white" alt="Groq"/>
+<img src="https://img.shields.io/badge/Cohere-39594D?style=for-the-badge&logo=cohere&logoColor=white" alt="Cohere"/>
 <img src="https://img.shields.io/badge/Milvus-00A1EA?style=for-the-badge&logo=apachekafka&logoColor=white" alt="Milvus"/>
 <img src="https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL"/>
 <img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker"/>
 <img src="https://img.shields.io/badge/Swagger_UI-85EA2D?style=for-the-badge&logo=swagger&logoColor=black" alt="Swagger"/>
-<img src="https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white" alt="Groq"/>
 <img src="https://img.shields.io/badge/Tokio-463E52?style=for-the-badge&logo=rust&logoColor=white" alt="Tokio"/>
 
 </div>
@@ -31,11 +31,11 @@ Most RAG stacks glue together Python microservices with high per-request overhea
 ### Key Features
 
 - **Full RAG pipeline in one binary** — upload, chunk, embed, store, search, and generate
-- **Only one API key needed** — [OpenRouter](https://openrouter.ai) handles both LLM completions *and* embeddings out of the box
+- **Two API keys, maximum speed** — [Groq](https://groq.com) for LLM completions, [Cohere](https://cohere.com) for embeddings
 - **Real-time SSE streaming** — tokens stream to the client as they're generated, with sources delivered as a leading SSE event
-- **Default model: `openai/gpt-oss-safeguard-20b`** — routed through **[Groq](https://groq.com)** via OpenRouter for maximum inference speed
+- **Default model: `openai/gpt-oss-20b`** — running on **Groq's LPU** inference hardware for maximum speed
+- **Cohere Embed v3** — `embed-english-light-v3.0` at 384 dimensions for fast, high-quality embeddings with asymmetric search (separate query vs document encoding)
 - **Concurrent document ingestion** — ZIP archives are unpacked and processed across 8 parallel workers with batched embedding calls
-- **Pluggable embedding provider** — OpenAI, Ollama, vLLM, LiteLLM, HuggingFace TEI, or just use OpenRouter
 - **Milvus HNSW vector search** — cosine similarity with tunable `ef` and `M` parameters
 - **JWT auth + Argon2id password hashing** — production-ready user management
 - **Interactive Swagger UI** — every endpoint documented with OpenAPI 3.0
@@ -50,8 +50,8 @@ Most RAG stacks glue together Python microservices with high per-request overhea
 │              │  SSE  │                   AlphaRust                      │
 │  Client /    │◄─────►│                                                  │
 │  Frontend    │       │  ┌──────────┐  ┌────────────┐  ┌──────────────┐  │
-│              │       │  │ Actix-web│  │ Embedding  │  │  OpenRouter  │  │
-└──────────────┘       │  │  Router  │─►│  Client    │  │  LLM Client  │  │
+│              │       │  │ Actix-web│  │  Cohere    │  │    Groq      │  │
+└──────────────┘       │  │  Router  │─►│ Embeddings │  │  LLM Client  │  │
                        │  └──────────┘  └──────┬─────┘  └──────┬───────┘  │
                        │                       │               │          │
                        │       ┌───────────────▼───────────────┘          │
@@ -62,11 +62,12 @@ Most RAG stacks glue together Python microservices with high per-request overhea
                        │  └─────────────┘  └──────────────┘               │
                        └──────────────────────────────────────────────────┘
                                           │
-                              ┌────────────────────────┐
-                              │    OpenRouter API      │
-                              │  LLM + Embeddings      │
-                              │  (one key, 200+ models)│
-                              └────────────────────────┘
+                       ┌──────────────────┴──────────────────┐
+                       │                                     │
+              ┌────────────────┐                 ┌───────────────────┐
+              │   Groq API     │                 │   Cohere API      │
+              │  LLM on LPU    │                 │   Embed v3        │
+              └────────────────┘                 └───────────────────┘
 ```
 
 ---
@@ -77,7 +78,8 @@ Most RAG stacks glue together Python microservices with high per-request overhea
 
 - **Rust 1.70+** — install via [rustup](https://rustup.rs/)
 - **Docker & Docker Compose** — for PostgreSQL and Milvus
-- **OpenRouter API key** — get one at [openrouter.ai](https://openrouter.ai/) ← **this is all you need**
+- **Groq API key** — get one at [console.groq.com](https://console.groq.com/) — for LLM completions
+- **Cohere API key** — get one at [dashboard.cohere.com](https://dashboard.cohere.com/) — for embeddings
 
 ### 1. Clone and configure
 
@@ -87,26 +89,22 @@ cd alpharust
 cp .env.example .env
 ```
 
-Edit `.env` — the only required external credential is your OpenRouter key:
+Edit `.env` with your API keys:
 
 ```env
 # ── Required ─────────────────────────────────────────────
-OPENROUTER_API_KEY=sk-or-your-key-here
+GROQ_API_KEY=gsk_your-groq-key-here
+COHERE_API_KEY=your-cohere-key-here
 
 # ── Infrastructure (defaults work with docker-compose) ───
 DATABASE_URL=postgres://alpharust:alpharust@localhost:5432/alpharust
 JWT_SECRET=change-me-to-a-long-random-string
 MILVUS_URL=http://localhost:19530
 
-# ── Embedding (optional — falls back to OpenRouter) ──────
-# Uncomment only if you want a dedicated provider like OpenAI:
-# EMBEDDING_MODEL=text-embedding-3-small
-# EMBEDDING_API_URL=https://api.openai.com/v1/embeddings
-# EMBEDDING_API_KEY=sk-...
-# EMBEDDING_DIMENSION=1536
+# ── Embedding model ─────────────────────────────────────
+EMBEDDING_MODEL=embed-english-light-v3.0
+EMBEDDING_DIMENSION=384
 ```
-
-> **How it works:** When `EMBEDDING_API_URL` and `EMBEDDING_API_KEY` are left empty, AlphaRust automatically routes embedding requests through `https://openrouter.ai/api/v1/embeddings` using your same `OPENROUTER_API_KEY`. Zero extra setup — one key powers the entire stack.
 
 ### 2. Start infrastructure
 
@@ -134,15 +132,15 @@ Upload a document, type a question with a collection name, and watch tokens stre
 
 ---
 
-## Default LLM: gpt-oss-safeguard-20b via Groq
+## Default LLM: openai/gpt-oss-20b via Groq
 
-AlphaRust ships with **`openai/gpt-oss-safeguard-20b`** as the default model, routed through **[Groq](https://groq.com)** on OpenRouter via provider preferences. This gives you:
+AlphaRust ships with **`openai/gpt-oss-20b`** as the default model, running on **[Groq](https://groq.com)**'s LPU inference hardware. This gives you:
 
-- **Extremely low latency** — Groq's LPU inference hardware delivers tokens faster than GPU-based providers
-- **Free or low-cost** — available on OpenRouter's free tier
-- **No config needed** — works immediately with just your OpenRouter key
+- **Extremely low latency** — Groq's LPU delivers tokens faster than GPU-based providers
+- **High quality** — Llama 3.3 70B provides strong reasoning and instruction following
+- **Simple setup** — just set your `GROQ_API_KEY`
 
-You can override the model per request by passing `"model": "anthropic/claude-sonnet-4"` (or any other [OpenRouter model](https://openrouter.ai/models)) in the `/chat` request body.
+You can override the model per request by passing `"model": "openai/gpt-oss-20b"` (or any other [Groq model](https://console.groq.com/docs/models)) in the `/chat` request body.
 
 ---
 
@@ -193,7 +191,7 @@ File upload (up to 2 GB, streamed to disk — never held in memory)
   → Text extraction (PDF via pdf-extract / TXT via UTF-8)
   → ZIP? Unpack → process entries concurrently (8 workers)
   → Word-level chunking (configurable size + overlap)
-  → Batch embedding (100 chunks per API call)
+  → Batch embedding via Cohere (100 chunks per API call, input_type=search_document)
   → Batch insert into Milvus (50 chunks per insert)
 ```
 
@@ -201,10 +199,10 @@ File upload (up to 2 GB, streamed to disk — never held in memory)
 
 ```
 User question
-  → Embed the query
+  → Embed the query via Cohere (input_type=search_query)
   → Milvus HNSW search (top-K, cosine similarity)
   → Inject retrieved chunks as system prompt context
-  → Stream LLM answer via SSE
+  → Stream LLM answer via SSE (Groq)
   → Sources emitted as leading "event: sources" SSE event
 ```
 
@@ -214,14 +212,14 @@ User question
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `OPENROUTER_API_KEY` | **Only required API key** — powers LLM + embeddings | *required* |
+| `GROQ_API_KEY` | Groq API key for LLM chat completions | *required* |
+| `COHERE_API_KEY` | Cohere API key for embeddings | *required* |
 | `DATABASE_URL` | PostgreSQL connection string | *required (local)* |
 | `JWT_SECRET` | Secret for signing JWT tokens | *required (local)* |
 | `MILVUS_URL` | Milvus REST API endpoint | `http://localhost:19530` |
-| `EMBEDDING_MODEL` | Model name (e.g. `text-embedding-3-small`) | — |
-| `EMBEDDING_API_URL` | Dedicated embeddings endpoint | Falls back to OpenRouter |
-| `EMBEDDING_API_KEY` | Dedicated embeddings key | Falls back to `OPENROUTER_API_KEY` |
-| `EMBEDDING_DIMENSION` | Vector dimensionality (must match model) | `3072` |
+| `LLM_MODEL` | Groq model for chat completions | `openai/gpt-oss-20b` |
+| `EMBEDDING_MODEL` | Cohere embedding model name | `embed-english-light-v3.0` |
+| `EMBEDDING_DIMENSION` | Vector dimensionality (must match model) | `384` |
 | `CHUNK_SIZE` | Default words per chunk | `500` |
 | `CHUNK_OVERLAP` | Overlap words between consecutive chunks | `50` |
 | `HOST` | Server bind address | `127.0.0.1` |
@@ -247,8 +245,8 @@ src/
 │   ├── requests.rs         # Validated request DTOs (serde + validator)
 │   └── responses.rs        # Response DTOs with utoipa OpenAPI schemas
 ├── services/
-│   ├── llm.rs              # OpenRouter client (sync + SSE streaming, Groq routing)
-│   ├── embeddings.rs       # OpenAI-compatible embedding client
+│   ├── llm.rs              # Groq LLM client (sync + SSE streaming)
+│   ├── embeddings.rs       # Cohere Embed v3 client (asymmetric search support)
 │   ├── milvus.rs           # Milvus v2 REST client (collections, insert, search)
 │   ├── document.rs         # Text extraction, ZIP unpacking, word-level chunking
 │   └── password.rs         # Argon2id hashing & verification
@@ -272,8 +270,8 @@ docker-compose.yml          # PostgreSQL 16 + Milvus 2.4
 | Layer | Technology | Role |
 |-------|-----------|------|
 | 🦀 **Runtime** | **Rust** + **Tokio** + **Actix-web 4** | Async web server with zero-cost abstractions |
-| 🤖 **LLM** | **OpenRouter** → **Groq** (`gpt-oss-safeguard-20b`) | Chat completions + SSE streaming at LPU speed |
-| 📐 **Embeddings** | **OpenRouter** (or any OpenAI-compatible API) | Document + query vectorization |
+| 🤖 **LLM** | **Groq** (`llama-3.3-70b-versatile`) | Chat completions + SSE streaming at LPU speed |
+| 📐 **Embeddings** | **Cohere** Embed v3 (`embed-english-light-v3.0`) | Fast asymmetric document + query vectorization |
 | 🔍 **Vector DB** | **Milvus 2.4** (HNSW, cosine similarity) | Sub-millisecond approximate nearest neighbor search |
 | 🗄️ **Database** | **PostgreSQL 16** + **SQLx** | Users, auth, migrations, compile-time checked queries |
 | 🔐 **Auth** | **JWT** + **Argon2id** | Stateless authentication with secure password storage |

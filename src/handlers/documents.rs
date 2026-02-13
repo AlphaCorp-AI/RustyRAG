@@ -12,7 +12,7 @@ use crate::schemas::responses::{
     DocumentSearchHit, DocumentSearchResponse, DocumentUploadResponse,
 };
 use crate::services::document::{chunk_text, extract_text_from_path, unpack_zip_entries};
-use crate::services::embeddings::EmbeddingClient;
+use crate::services::embeddings::{EmbeddingClient, InputType};
 use crate::services::milvus::{DocumentChunk, MilvusClient, DEFAULT_COLLECTION};
 
 /// Batch size when calling the embedding API
@@ -59,7 +59,7 @@ pub async fn upload_document(
     if !embeddings.is_configured() {
         return Err(AppError::BadRequest(
             "Embedding API is not configured. \
-             Set EMBEDDING_MODEL, EMBEDDING_API_URL, and EMBEDDING_API_KEY."
+             Set COHERE_API_KEY and EMBEDDING_MODEL."
                 .into(),
         ));
     }
@@ -302,7 +302,7 @@ async fn embed_and_insert_text(
         // Embed this batch
         let texts: Vec<String> = batch.to_vec();
         let embs = embeddings
-            .embed(&texts)
+            .embed(&texts, InputType::SearchDocument)
             .await
             .map_err(|e| AppError::EmbeddingError(e.to_string()))?;
 
@@ -356,7 +356,7 @@ pub async fn search_documents(
     if !embeddings.is_configured() {
         return Err(AppError::BadRequest(
             "Embedding API is not configured. \
-             Set EMBEDDING_MODEL, EMBEDDING_API_URL, and EMBEDDING_API_KEY."
+             Set COHERE_API_KEY and EMBEDDING_MODEL."
                 .into(),
         ));
     }
@@ -369,7 +369,7 @@ pub async fn search_documents(
 
     // Embed the query
     let embs = embeddings
-        .embed(&[body.query.clone()])
+        .embed(&[body.query.clone()], InputType::SearchQuery)
         .await
         .map_err(|e| AppError::EmbeddingError(e.to_string()))?;
 

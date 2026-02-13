@@ -7,11 +7,11 @@ use crate::schemas::requests::{ChatRagRequest, ChatRequest};
 use crate::schemas::responses::{
     ChatRagResponse, ChatResponse, ErrorResponse, RagSource, Usage,
 };
-use crate::services::embeddings::EmbeddingClient;
+use crate::services::embeddings::{EmbeddingClient, InputType};
 use crate::services::llm::LlmClient;
 use crate::services::milvus::MilvusClient;
 
-/// Send a message to the LLM via OpenRouter
+/// Send a message to the LLM via Groq
 #[utoipa::path(
     post,
     path = "/chat",
@@ -53,7 +53,7 @@ pub async fn chat(
 
 /// Stream a chat completion via Server-Sent Events.
 ///
-/// Proxies the SSE stream from OpenRouter directly to the client.
+/// Proxies the SSE stream from Groq directly to the client.
 #[utoipa::path(
     post,
     path = "/chat/stream",
@@ -81,7 +81,6 @@ pub async fn chat_stream(
     // Forward the upstream SSE byte stream to the client
     let byte_stream = upstream.bytes_stream().map(|chunk| {
         chunk
-            .map(|b| actix_web::web::Bytes::from(b.to_vec()))
             .map_err(|e| {
                 actix_web::error::ErrorBadGateway(format!("Stream error: {e}"))
             })
@@ -126,7 +125,7 @@ pub async fn chat_rag(
     if !embeddings.is_configured() {
         return Err(AppError::BadRequest(
             "Embedding API is not configured. \
-             Set EMBEDDING_MODEL, EMBEDDING_API_URL, and EMBEDDING_API_KEY."
+             Set COHERE_API_KEY and EMBEDDING_MODEL."
                 .into(),
         ));
     }
@@ -135,7 +134,7 @@ pub async fn chat_rag(
 
     // ── 1. Embed the user's question ────────────────────────────
     let embs = embeddings
-        .embed(&[body.message.clone()])
+        .embed(&[body.message.clone()], InputType::SearchQuery)
         .await
         .map_err(|e| AppError::EmbeddingError(e.to_string()))?;
 
@@ -193,7 +192,7 @@ pub async fn chat_rag(
             &system_prompt,
             &body.message,
             None,
-            None,
+            Some(1024),
         )
         .await
         .map_err(|e| AppError::LlmError(e.to_string()))?;
@@ -244,7 +243,7 @@ pub async fn chat_rag_stream(
     if !embeddings.is_configured() {
         return Err(AppError::BadRequest(
             "Embedding API is not configured. \
-             Set EMBEDDING_MODEL, EMBEDDING_API_URL, and EMBEDDING_API_KEY."
+             Set COHERE_API_KEY and EMBEDDING_MODEL."
                 .into(),
         ));
     }
@@ -253,7 +252,7 @@ pub async fn chat_rag_stream(
 
     // ── 1. Embed the user's question ────────────────────────────
     let embs = embeddings
-        .embed(&[body.message.clone()])
+        .embed(&[body.message.clone()], InputType::SearchQuery)
         .await
         .map_err(|e| AppError::EmbeddingError(e.to_string()))?;
 
@@ -323,7 +322,6 @@ pub async fn chat_rag_stream(
 
     let llm_stream = upstream.bytes_stream().map(|chunk| {
         chunk
-            .map(|b| actix_web::web::Bytes::from(b.to_vec()))
             .map_err(|e| actix_web::error::ErrorBadGateway(format!("Stream error: {e}")))
     });
 

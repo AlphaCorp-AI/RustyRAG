@@ -156,7 +156,7 @@ Most RAG stacks glue together Python microservices with high per-request overhea
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/your-org/alpharust.git
+git clone https://github.com/AlphaCorp-AI/AlphaRustyRAG
 cd alpharust
 cp .env.example .env
 ```

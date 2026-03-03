@@ -311,7 +311,7 @@ async fn embed_and_insert_chunks(
 // ── Contextual retrieval ───────────────────────────────────────────
 
 const MAX_RETRIES: u32 = 6;
-const INITIAL_BACKOFF_MS: u64 = 2000;
+const INITIAL_BACKOFF_MS: u64 = 500;
 const PAGE_WINDOW: u32 = 2;
 const DOC_OVERVIEW_CHARS: usize = 2000;
 

@@ -118,7 +118,7 @@ fn default_contextual_model() -> String {
     "llama-3.1-8b-instant".to_string()
 }
 fn default_contextual_concurrency() -> usize {
-    4
+    24
 }
 fn default_contextual_max_doc_chars() -> usize {
     6_000

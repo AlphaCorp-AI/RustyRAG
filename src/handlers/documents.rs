@@ -21,7 +21,7 @@ use crate::services::milvus::{DocumentChunk, MilvusClient, SearchOptions, DEFAUL
 const INSERT_BATCH_SIZE: usize = 50;
 
 /// Max number of files from a ZIP processed concurrently
-const CONCURRENT_FILES: usize = 4;
+const CONCURRENT_FILES: usize = 8;
 
 // ── Upload endpoint ────────────────────────────────────────────────
 

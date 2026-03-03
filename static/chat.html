@@ -61,7 +61,8 @@
     white-space: nowrap;
   }
 
-  .settings-bar input {
+  .settings-bar input,
+  .settings-bar select {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -74,7 +75,8 @@
     transition: border-color 0.15s;
   }
 
-  .settings-bar input:focus {
+  .settings-bar input:focus,
+  .settings-bar select:focus {
     border-color: var(--blue);
   }
 
@@ -202,6 +204,7 @@
     margin-top: 2px;
     display: -webkit-box;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
@@ -282,9 +285,11 @@
   <header>
     <h1>AlphaRust Chat</h1>
     <div class="settings-bar">
-      <label for="collection">Collection:</label>
-      <input type="text" id="collection" placeholder="empty = plain chat" />
-      <span id="rag-badge" class="rag-badge inactive">STREAM</span>
+      <label for="provider">Provider:</label>
+      <select id="provider"></select>
+      <label for="model">Model:</label>
+      <select id="model"></select>
+      <span id="rag-badge" class="rag-badge active" title="Toggle Chat/RAG mode">RAG</span>
     </div>
   </header>
   <div id="messages"></div>
@@ -299,18 +304,25 @@
 <script>
 const STREAM_API = '/api/v1/chat/stream';
 const RAG_STREAM_API = '/api/v1/chat-rag/stream';
+const LLM_LIST_API = '/api/v1/llms';
 const messagesEl = document.getElementById('messages');
 const inputEl = document.getElementById('input');
 const sendBtn = document.getElementById('send-btn');
 const form = document.getElementById('input-form');
-const collectionEl = document.getElementById('collection');
+const providerEl = document.getElementById('provider');
+const modelEl = document.getElementById('model');
 const ragBadge = document.getElementById('rag-badge');
+let availableModels = [];
+let ragEnabled = true;
 
-// Update badge when collection input changes
-collectionEl.addEventListener('input', () => {
-  const hasCollection = collectionEl.value.trim().length > 0;
-  ragBadge.textContent = hasCollection ? 'RAG' : 'CHAT';
-  ragBadge.className = 'rag-badge ' + (hasCollection ? 'active' : 'inactive');
+providerEl.addEventListener('change', () => {
+  renderModelOptions(providerEl.value);
+});
+
+ragBadge.addEventListener('click', () => {
+  ragEnabled = !ragEnabled;
+  ragBadge.textContent = ragEnabled ? 'RAG' : 'CHAT';
+  ragBadge.className = 'rag-badge ' + (ragEnabled ? 'active' : 'inactive');
 });
 
 // Auto-resize textarea
@@ -331,15 +343,20 @@ form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const text = inputEl.value.trim();
   if (!text) return;
+  const provider = providerEl.value;
+  const model = modelEl.value;
+  if (!provider || !model) {
+    addMessage('assistant', 'Pick provider and model first.');
+    return;
+  }
 
-  const collection = collectionEl.value.trim();
-  const isRag = collection.length > 0;
+  const isRag = ragEnabled;
 
   // Pick endpoint & body
   const url = isRag ? RAG_STREAM_API : STREAM_API;
   const payload = isRag
-    ? { message: text, collection_name: collection, limit: 3 }
-    : { message: text };
+    ? { message: text, limit: 3, provider, model }
+    : { message: text, provider, model };
 
   // Add user message
   addMessage('user', text);
@@ -525,6 +542,43 @@ function addSourcesPanel(bubble, sources) {
     messagesEl.scrollTop = messagesEl.scrollHeight;
   });
 }
+
+async function loadModels() {
+  try {
+    const res = await fetch(LLM_LIST_API);
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    availableModels = Array.isArray(data.models) ? data.models : [];
+    if (availableModels.length === 0) throw new Error('No models configured');
+
+    const providers = [...new Set(availableModels.map((m) => m.provider))];
+    providerEl.innerHTML = '';
+    for (const provider of providers) {
+      const opt = document.createElement('option');
+      opt.value = provider;
+      opt.textContent = provider;
+      providerEl.appendChild(opt);
+    }
+    renderModelOptions(providerEl.value);
+  } catch (err) {
+    addMessage('assistant', `Failed to load models: ${err.message}`);
+  }
+}
+
+function renderModelOptions(provider) {
+  const models = availableModels
+    .filter((m) => m.provider === provider)
+    .map((m) => m.model);
+  modelEl.innerHTML = '';
+  for (const model of models) {
+    const opt = document.createElement('option');
+    opt.value = model;
+    opt.textContent = model;
+    modelEl.appendChild(opt);
+  }
+}
+
+loadModels();
 </script>
 </body>
 </html>

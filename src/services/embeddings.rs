@@ -2,11 +2,9 @@ use anyhow::Context;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-// ── Cohere Embed v2 client ─────────────────────────────────────────
+// ── OpenAI-compatible embedding client ─────────────────────────────
 
-const COHERE_EMBED_URL: &str = "https://api.cohere.com/v2/embed";
-
-/// Controls how Cohere encodes the text.
+/// Controls how the embedding model encodes the text.
 ///
 /// Use `SearchDocument` when indexing/storing and `SearchQuery` when
 /// embedding a user query for retrieval.
@@ -16,93 +14,152 @@ pub enum InputType {
     SearchQuery,
 }
 
-impl InputType {
-    fn as_str(self) -> &'static str {
-        match self {
-            InputType::SearchDocument => "search_document",
-            InputType::SearchQuery => "search_query",
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct EmbeddingClient {
     http: Client,
+    api_url: String,
     api_key: String,
     model: String,
+    default_embedding_type: String,
+    task_document: String,
+    task_query: String,
 }
 
 #[derive(Serialize)]
-struct CohereEmbedRequest {
+struct EmbeddingRequest {
     model: String,
-    texts: Vec<String>,
-    input_type: String,
-    embedding_types: Vec<String>,
+    input: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    embedding_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    task: Option<String>,
 }
 
 #[derive(Deserialize)]
-struct CohereEmbedResponse {
-    embeddings: CohereEmbeddings,
+struct EmbeddingResponse {
+    data: Vec<EmbeddingData>,
 }
 
 #[derive(Deserialize)]
-struct CohereEmbeddings {
-    float: Vec<Vec<f32>>,
+struct EmbeddingData {
+    embedding: Vec<f32>,
 }
 
 impl EmbeddingClient {
-    pub fn new(api_key: &str, model: &str) -> Self {
+    pub fn new(
+        api_url: &str,
+        api_key: &str,
+        model: &str,
+        default_embedding_type: &str,
+        task_document: &str,
+        task_query: &str,
+    ) -> Self {
         Self {
-            http: Client::new(),
+            http: Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(2))
+                .pool_idle_timeout(std::time::Duration::from_secs(90))
+                .pool_max_idle_per_host(32)
+                .build()
+                .expect("Failed to build reqwest client for embeddings"),
+            api_url: api_url.trim_end_matches('/').to_string(),
             api_key: api_key.to_string(),
             model: model.to_string(),
+            default_embedding_type: default_embedding_type.to_string(),
+            task_document: task_document.to_string(),
+            task_query: task_query.to_string(),
         }
     }
 
     /// Returns `true` when the client has been configured (all fields non-empty).
     pub fn is_configured(&self) -> bool {
-        !self.api_key.is_empty() && !self.model.is_empty()
+        !self.api_url.is_empty() && !self.model.is_empty()
     }
 
-    /// Embed a batch of texts via the Cohere v2 API.
-    ///
-    /// Returns one `Vec<f32>` per input, in order.
-    pub async fn embed(
+    fn task_for(&self, input_type: InputType) -> String {
+        match input_type {
+            InputType::SearchDocument => self.task_document.clone(),
+            InputType::SearchQuery => self.task_query.clone(),
+        }
+    }
+
+    fn is_v5_retrieval_model(&self) -> bool {
+        self.model.contains("jina-embeddings-v5-text-") && self.model.contains("-retrieval")
+    }
+
+    fn apply_retrieval_prefixes(&self, texts: &[String], input_type: InputType) -> Vec<String> {
+        if !self.is_v5_retrieval_model() {
+            return texts.to_vec();
+        }
+
+        let prefix = match input_type {
+            InputType::SearchDocument => "Document: ",
+            InputType::SearchQuery => "Query: ",
+        };
+
+        texts
+            .iter()
+            .map(|t| {
+                if t.starts_with("Query: ") || t.starts_with("Document: ") {
+                    t.clone()
+                } else {
+                    format!("{prefix}{t}")
+                }
+            })
+            .collect()
+    }
+
+    pub async fn embed_with_options(
         &self,
         texts: &[String],
         input_type: InputType,
+        embedding_type: Option<&str>,
+        task_override: Option<&str>,
     ) -> anyhow::Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(vec![]);
         }
 
-        let body = CohereEmbedRequest {
+        let task = task_override.map(|v| v.to_string()).or_else(|| {
+            let t = self.task_for(input_type);
+            if t.is_empty() {
+                None
+            } else {
+                Some(t)
+            }
+        });
+
+        let requested_embedding_type = embedding_type.map(|v| v.to_string()).or_else(|| {
+            if self.default_embedding_type.is_empty() {
+                None
+            } else {
+                Some(self.default_embedding_type.clone())
+            }
+        });
+
+        let body = EmbeddingRequest {
             model: self.model.clone(),
-            texts: texts.to_vec(),
-            input_type: input_type.as_str().to_string(),
-            embedding_types: vec!["float".to_string()],
+            input: self.apply_retrieval_prefixes(texts, input_type),
+            embedding_type: requested_embedding_type,
+            task,
         };
 
-        let res = self
-            .http
-            .post(COHERE_EMBED_URL)
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .await
-            .context("Failed to call Cohere embedding API")?;
+        let mut req = self.http.post(&self.api_url).json(&body);
+        if !self.api_key.is_empty() {
+            req = req.bearer_auth(&self.api_key);
+        }
+        let res = req.send().await.context("Failed to call embedding API")?;
 
         let status = res.status();
         if !status.is_success() {
             let text = res.text().await.unwrap_or_default();
-            anyhow::bail!("Cohere embedding API returned {status}: {text}");
+            anyhow::bail!("Embedding API returned {status}: {text}");
         }
 
-        let data: CohereEmbedResponse = res
+        let data: EmbeddingResponse = res
             .json()
             .await
-            .context("Failed to parse Cohere embedding response")?;
+            .context("Failed to parse embedding response")?;
 
-        Ok(data.embeddings.float)
+        Ok(data.data.into_iter().map(|v| v.embedding).collect())
     }
 }

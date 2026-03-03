@@ -1,17 +1,37 @@
-use actix_web::{post, web, HttpResponse};
+use actix_web::{get, post, web, HttpResponse};
 use futures_util::StreamExt;
 use validator::Validate;
 
 use crate::errors::AppError;
+use crate::prompts::build_rag_system_prompt;
 use crate::schemas::requests::{ChatRagRequest, ChatRequest};
-use crate::schemas::responses::{
-    ChatRagResponse, ChatResponse, ErrorResponse, RagSource, Usage,
-};
+use crate::schemas::responses::{ChatRagResponse, ChatResponse, ErrorResponse, RagSource, Usage};
+use crate::schemas::responses::{LlmModelEntry, LlmModelsResponse};
 use crate::services::embeddings::{EmbeddingClient, InputType};
 use crate::services::llm::LlmClient;
-use crate::services::milvus::MilvusClient;
+use crate::services::milvus::{MilvusClient, SearchOptions, DEFAULT_COLLECTION};
 
-/// Send a message to the LLM via Groq
+#[utoipa::path(
+    get,
+    path = "/llms",
+    responses(
+        (status = 200, description = "Supported LLMs grouped by provider", body = LlmModelsResponse),
+    ),
+    tag = "chat"
+)]
+#[get("/llms")]
+pub async fn list_llms() -> HttpResponse {
+    let models = LlmClient::supported_models()
+        .into_iter()
+        .map(|(provider, model)| LlmModelEntry {
+            provider: provider.to_string(),
+            model: model.to_string(),
+        })
+        .collect();
+    HttpResponse::Ok().json(LlmModelsResponse { models })
+}
+
+/// Send a message to the configured LLM provider.
 #[utoipa::path(
     post,
     path = "/chat",
@@ -32,7 +52,7 @@ pub async fn chat(
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
 
     let result = llm
-        .chat(&body.message, body.model.as_deref(), body.max_tokens)
+        .chat(&body.message, &body.model, &body.provider, body.max_tokens)
         .await
         .map_err(|e| AppError::LlmError(e.to_string()))?;
 
@@ -53,7 +73,7 @@ pub async fn chat(
 
 /// Stream a chat completion via Server-Sent Events.
 ///
-/// Proxies the SSE stream from Groq directly to the client.
+/// Proxies the upstream SSE stream directly to the client.
 #[utoipa::path(
     post,
     path = "/chat/stream",
@@ -74,16 +94,13 @@ pub async fn chat_stream(
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
 
     let upstream = llm
-        .chat_stream(&body.message)
+        .chat_stream(&body.message, &body.model, &body.provider)
         .await
         .map_err(|e| AppError::LlmError(e.to_string()))?;
 
     // Forward the upstream SSE byte stream to the client
     let byte_stream = upstream.bytes_stream().map(|chunk| {
-        chunk
-            .map_err(|e| {
-                actix_web::error::ErrorBadGateway(format!("Stream error: {e}"))
-            })
+        chunk.map_err(|e| actix_web::error::ErrorBadGateway(format!("Stream error: {e}")))
     });
 
     Ok(HttpResponse::Ok()
@@ -125,16 +142,25 @@ pub async fn chat_rag(
     if !embeddings.is_configured() {
         return Err(AppError::BadRequest(
             "Embedding API is not configured. \
-             Set COHERE_API_KEY and EMBEDDING_MODEL."
+             Set EMBEDDING_API_URL and EMBEDDING_MODEL."
                 .into(),
         ));
     }
 
     let limit = body.limit.unwrap_or(5);
+    let collection_name = body
+        .collection_name
+        .as_deref()
+        .unwrap_or(DEFAULT_COLLECTION);
 
     // ── 1. Embed the user's question ────────────────────────────
     let embs = embeddings
-        .embed(&[body.message.clone()], InputType::SearchQuery)
+        .embed_with_options(
+            &[body.message.clone()],
+            InputType::SearchQuery,
+            body.embedding_type.as_deref(),
+            None,
+        )
         .await
         .map_err(|e| AppError::EmbeddingError(e.to_string()))?;
 
@@ -145,14 +171,21 @@ pub async fn chat_rag(
 
     // ── 2. Retrieve similar chunks from Milvus ──────────────────
     let hits = milvus
-        .search(&body.collection_name, query_embedding, limit)
+        .search(
+            collection_name,
+            query_embedding,
+            limit,
+            Some(SearchOptions {
+                ef: body.milvus_search_ef,
+            }),
+        )
         .await
         .map_err(|e| AppError::MilvusError(e.to_string()))?;
 
     if hits.is_empty() {
         return Err(AppError::BadRequest(format!(
             "No documents found in collection '{}'",
-            body.collection_name
+            collection_name
         )));
     }
 
@@ -162,6 +195,7 @@ pub async fn chat_rag(
             text: h.text.clone(),
             source_file: h.source_file.clone(),
             chunk_index: h.chunk_index,
+            page_number: h.page_number,
             score: h.score,
         })
         .collect();
@@ -170,28 +204,18 @@ pub async fn chat_rag(
     let context = hits
         .iter()
         .enumerate()
-        .map(|(i, h)| {
-            format!(
-                "[Source {} — {}]\n{}",
-                i + 1,
-                h.source_file,
-                h.text
-            )
-        })
+        .map(|(i, h)| format!("[Source {} — {}]\n{}", i + 1, h.source_file, h.text))
         .collect::<Vec<_>>()
         .join("\n\n");
 
-    let system_prompt = format!(
-        "Answer the question directly and concisely using only the context below. \
-         Do not mention or cite sources in your answer.\n\n\
-         ---\n{context}\n---"
-    );
+    let system_prompt = build_rag_system_prompt(&context);
 
     let result = llm
         .chat_with_system(
             &system_prompt,
             &body.message,
-            None,
+            &body.model,
+            &body.provider,
             Some(1024),
         )
         .await
@@ -243,16 +267,25 @@ pub async fn chat_rag_stream(
     if !embeddings.is_configured() {
         return Err(AppError::BadRequest(
             "Embedding API is not configured. \
-             Set COHERE_API_KEY and EMBEDDING_MODEL."
+             Set EMBEDDING_API_URL and EMBEDDING_MODEL."
                 .into(),
         ));
     }
 
     let limit = body.limit.unwrap_or(5);
+    let collection_name = body
+        .collection_name
+        .as_deref()
+        .unwrap_or(DEFAULT_COLLECTION);
 
     // ── 1. Embed the user's question ────────────────────────────
     let embs = embeddings
-        .embed(&[body.message.clone()], InputType::SearchQuery)
+        .embed_with_options(
+            &[body.message.clone()],
+            InputType::SearchQuery,
+            body.embedding_type.as_deref(),
+            None,
+        )
         .await
         .map_err(|e| AppError::EmbeddingError(e.to_string()))?;
 
@@ -263,14 +296,21 @@ pub async fn chat_rag_stream(
 
     // ── 2. Retrieve similar chunks from Milvus ──────────────────
     let hits = milvus
-        .search(&body.collection_name, query_embedding, limit)
+        .search(
+            collection_name,
+            query_embedding,
+            limit,
+            Some(SearchOptions {
+                ef: body.milvus_search_ef,
+            }),
+        )
         .await
         .map_err(|e| AppError::MilvusError(e.to_string()))?;
 
     if hits.is_empty() {
         return Err(AppError::BadRequest(format!(
             "No documents found in collection '{}'",
-            body.collection_name
+            collection_name
         )));
     }
 
@@ -280,6 +320,7 @@ pub async fn chat_rag_stream(
             text: h.text.clone(),
             source_file: h.source_file.clone(),
             chunk_index: h.chunk_index,
+            page_number: h.page_number,
             score: h.score,
         })
         .collect();
@@ -288,26 +329,15 @@ pub async fn chat_rag_stream(
     let context = hits
         .iter()
         .enumerate()
-        .map(|(i, h)| {
-            format!(
-                "[Source {} — {}]\n{}",
-                i + 1,
-                h.source_file,
-                h.text
-            )
-        })
+        .map(|(i, h)| format!("[Source {} — {}]\n{}", i + 1, h.source_file, h.text))
         .collect::<Vec<_>>()
         .join("\n\n");
 
-    let system_prompt = format!(
-        "Answer the question directly and concisely using only the context below. \
-         Do not mention or cite sources in your answer.\n\n\
-         ---\n{context}\n---"
-    );
+    let system_prompt = build_rag_system_prompt(&context);
 
     // ── 4. Start streaming LLM response ─────────────────────────
     let upstream = llm
-        .chat_stream_with_system(&system_prompt, &body.message)
+        .chat_stream_with_system(&system_prompt, &body.message, &body.model, &body.provider)
         .await
         .map_err(|e| AppError::LlmError(e.to_string()))?;
 
@@ -315,14 +345,12 @@ pub async fn chat_rag_stream(
     let sources_json = serde_json::to_string(&sources).unwrap_or_default();
     let sources_event = format!("event: sources\ndata: {sources_json}\n\n");
 
-    let sources_stream =
-        futures_util::stream::once(async move {
-            Ok::<_, actix_web::error::Error>(actix_web::web::Bytes::from(sources_event))
-        });
+    let sources_stream = futures_util::stream::once(async move {
+        Ok::<_, actix_web::error::Error>(actix_web::web::Bytes::from(sources_event))
+    });
 
     let llm_stream = upstream.bytes_stream().map(|chunk| {
-        chunk
-            .map_err(|e| actix_web::error::ErrorBadGateway(format!("Stream error: {e}")))
+        chunk.map_err(|e| actix_web::error::ErrorBadGateway(format!("Stream error: {e}")))
     });
 
     let combined = sources_stream.chain(llm_stream);

@@ -1,0 +1,6 @@
+Answer the question directly and concisely using only the context below.
+Do not mention or cite sources in your answer.
+
+<context>
+{context}
+</context>

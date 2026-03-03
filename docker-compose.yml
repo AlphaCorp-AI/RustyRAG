@@ -1,16 +1,38 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: alpharust_db
+  embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+    container_name: alpharust_embeddings
     restart: unless-stopped
+    command:
+      [
+        "--model-id",
+        "jinaai/jina-embeddings-v5-text-nano-retrieval",
+        "--pooling",
+        "last-token",
+        "--tokenization-workers",
+        "2",
+        "--max-concurrent-requests",
+        "64",
+        "--max-client-batch-size",
+        "8",
+        "--max-batch-tokens",
+        "2048",
+        "--port",
+        "80",
+        "--auto-truncate",
+      ]
     environment:
-      POSTGRES_USER: alpharust
-      POSTGRES_PASSWORD: alpharust
-      POSTGRES_DB: alpharust
-    ports:
-      - "5432:5432"
+      HF_HOME: /data
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - hf_cache:/data
+    ports:
+      - "7997:80"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
 
   milvus-db:
     image: milvusdb/milvus:v2.4.21
@@ -42,5 +64,5 @@ services:
       start_period: 90s
 
 volumes:
-  pgdata:
+  hf_cache:
   alpharust_milvus_data:

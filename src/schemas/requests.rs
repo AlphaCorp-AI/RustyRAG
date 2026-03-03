@@ -14,46 +14,19 @@ pub struct ChatRequest {
     #[validate(length(min = 1, max = 10_000))]
     pub message: String,
 
-    /// Override the default model (defaults to openai/gpt-oss-20b)
-    #[schema(example = "openai/gpt-oss-20b")]
-    pub model: Option<String>,
+    /// Model to use for this request.
+    #[validate(length(min = 1))]
+    #[schema(example = "llama-3.3-70b-versatile")]
+    pub model: String,
+
+    /// Provider to use for this request ("groq" or "cerebras")
+    #[validate(length(min = 1))]
+    #[schema(example = "groq")]
+    pub provider: String,
 
     /// Max tokens for the completion
     #[schema(example = 2048)]
     pub max_tokens: Option<u32>,
-}
-
-// ── Users ───────────────────────────────────────────────────────────
-
-/// POST /api/v1/users/register
-#[derive(Debug, Deserialize, Validate, ToSchema)]
-pub struct CreateUserRequest {
-    /// Display name
-    #[validate(length(min = 1, max = 255))]
-    #[schema(example = "John Doe")]
-    pub name: String,
-
-    /// Unique email address
-    #[validate(email)]
-    #[schema(example = "john@example.com")]
-    pub email: String,
-
-    /// Plain-text password (hashed server-side)
-    #[validate(length(min = 8, max = 128))]
-    #[schema(example = "supersecret123")]
-    pub password: String,
-}
-
-/// POST /api/v1/users/login
-#[derive(Debug, Deserialize, Validate, ToSchema)]
-pub struct LoginRequest {
-    #[validate(email)]
-    #[schema(example = "john@example.com")]
-    pub email: String,
-
-    #[validate(length(min = 1))]
-    #[schema(example = "supersecret123")]
-    pub password: String,
 }
 
 // ── Documents ──────────────────────────────────────────────────────
@@ -64,14 +37,6 @@ pub struct DocumentUploadQuery {
     /// Target Milvus collection (defaults to "documents")
     #[schema(example = "documents")]
     pub collection_name: Option<String>,
-
-    /// Words per chunk (overrides server default)
-    #[schema(example = 500)]
-    pub chunk_size: Option<usize>,
-
-    /// Overlap words between consecutive chunks
-    #[schema(example = 50)]
-    pub chunk_overlap: Option<usize>,
 }
 
 /// POST /api/v1/documents/search
@@ -88,6 +53,14 @@ pub struct DocumentSearchRequest {
     /// Max results to return (defaults to 10)
     #[schema(example = 10)]
     pub limit: Option<i64>,
+
+    /// Optional embedding type sent to the embedding server (e.g. "float")
+    #[schema(example = "float")]
+    pub embedding_type: Option<String>,
+
+    /// Optional override for Milvus search `ef` parameter
+    #[schema(example = 64)]
+    pub milvus_search_ef: Option<i64>,
 }
 
 // ── Chat RAG ────────────────────────────────────────────────────────
@@ -99,13 +72,31 @@ pub struct ChatRagRequest {
     #[validate(length(min = 1, max = 10_000))]
     pub message: String,
 
-    /// Milvus collection to search for context
+    /// Milvus collection to search for context (defaults to "documents")
     #[schema(example = "documents")]
-    pub collection_name: String,
+    pub collection_name: Option<String>,
 
     /// Number of source chunks to include as context (defaults to 5)
     #[schema(example = 5)]
     pub limit: Option<i64>,
+
+    /// Model to use for this request
+    #[validate(length(min = 1))]
+    #[schema(example = "llama-3.1-8b")]
+    pub model: String,
+
+    /// Provider to use for this request ("groq" or "cerebras")
+    #[validate(length(min = 1))]
+    #[schema(example = "cerebras")]
+    pub provider: String,
+
+    /// Optional embedding type sent to the embedding server (e.g. "float")
+    #[schema(example = "float")]
+    pub embedding_type: Option<String>,
+
+    /// Optional override for Milvus search `ef` parameter
+    #[schema(example = 64)]
+    pub milvus_search_ef: Option<i64>,
 }
 
 /// Schema-only struct so Swagger renders a file picker for the upload endpoint.

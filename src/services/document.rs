@@ -1,55 +1,54 @@
 use std::path::Path;
 
 use anyhow::Context;
+use text_splitter::TextSplitter;
 
-// ── Text extraction (from bytes) ───────────────────────────────────
+// ── Page-level extraction result ────────────────────────────────────
 
-/// Extract text from in-memory file data based on its extension.
-/// Supports `.txt` and `.pdf`.
-#[allow(dead_code)]
-pub fn extract_text(filename: &str, data: &[u8]) -> anyhow::Result<String> {
-    let ext = filename
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_lowercase();
-
-    match ext.as_str() {
-        "txt" => String::from_utf8(data.to_vec()).context("File is not valid UTF-8"),
-        "pdf" => {
-            use std::io::Write as _;
-            let mut tmp = tempfile::NamedTempFile::new().context("Failed to create temp file")?;
-            tmp.write_all(data).context("Failed to write PDF to temp file")?;
-            extract_pdf_from_path(tmp.path())
-        }
-        _ => Err(anyhow::anyhow!("Unsupported file type: .{ext}")),
-    }
+/// A single page of extracted text with its 1-based page number.
+#[derive(Debug, Clone)]
+pub struct PageText {
+    pub text: String,
+    /// 1-based page number (`None` for non-paginated formats like .txt).
+    pub page_number: Option<u32>,
 }
 
 // ── Text extraction (from file path) ───────────────────────────────
 
-/// Extract text from a file on disk. Extension is inferred from `filename`.
-pub fn extract_text_from_path(path: &Path, filename: &str) -> anyhow::Result<String> {
-    let ext = filename
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_lowercase();
+/// Extract text from a file on disk, returning one [`PageText`] per logical
+/// page.  For `.txt` files there is a single entry with `page_number = None`.
+pub fn extract_pages_from_path(path: &Path, filename: &str) -> anyhow::Result<Vec<PageText>> {
+    let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
 
     match ext.as_str() {
-        "txt" => std::fs::read_to_string(path).context("Failed to read text file"),
-        "pdf" => extract_pdf_from_path(path),
+        "txt" => {
+            let text = std::fs::read_to_string(path).context("Failed to read text file")?;
+            Ok(vec![PageText {
+                text,
+                page_number: None,
+            }])
+        }
+        "pdf" => extract_pdf_pages(path),
         _ => Err(anyhow::anyhow!("Unsupported file type: .{ext}")),
     }
 }
 
-fn extract_pdf_from_path(path: &Path) -> anyhow::Result<String> {
-    // stdout is globally redirected to /dev/null at startup (see main.rs),
-    // so pdf-extract's noisy debug prints are silenced process-wide.
-    let path_buf = path.to_path_buf();
-    let result = std::panic::catch_unwind(move || pdf_extract::extract_text(path_buf));
+fn extract_pdf_pages(path: &Path) -> anyhow::Result<Vec<PageText>> {
+    let bytes = std::fs::read(path).context("Failed to read PDF file into memory")?;
+
+    let result =
+        std::panic::catch_unwind(move || pdf_extract::extract_text_from_mem_by_pages(&bytes));
+
     match result {
-        Ok(Ok(text)) => Ok(text),
+        Ok(Ok(pages)) => Ok(pages
+            .into_iter()
+            .enumerate()
+            .filter(|(_, text)| !text.trim().is_empty())
+            .map(|(idx, text)| PageText {
+                text,
+                page_number: Some((idx + 1) as u32),
+            })
+            .collect()),
         Ok(Err(e)) => Err(anyhow::anyhow!("PDF extraction failed: {e}")),
         Err(panic) => {
             let msg = if let Some(s) = panic.downcast_ref::<&str>() {
@@ -91,12 +90,10 @@ pub fn unpack_zip_entries(
 
         let name = entry.name().to_string();
 
-        // Skip directories
         if name.ends_with('/') {
             continue;
         }
 
-        // Skip macOS resource fork metadata (.__* files inside __MACOSX/)
         let basename = name.rsplit('/').next().unwrap_or(&name);
         if name.contains("__MACOSX") || basename.starts_with("._") {
             continue;
@@ -108,8 +105,7 @@ pub fn unpack_zip_entries(
             continue;
         }
 
-        let mut tmp =
-            tempfile::NamedTempFile::new().context("Failed to create temp file")?;
+        let mut tmp = tempfile::NamedTempFile::new().context("Failed to create temp file")?;
         std::io::copy(&mut entry, &mut tmp)
             .context(format!("Failed to write {name} to temp file"))?;
         tmp.flush()
@@ -120,37 +116,64 @@ pub fn unpack_zip_entries(
     Ok(results)
 }
 
-// ── Chunking ───────────────────────────────────────────────────────
+// ── Semantic chunking ───────────────────────────────────────────────
 
-/// Split `text` into chunks of approximately `chunk_size` **words** with
-/// `chunk_overlap` words of overlap between consecutive chunks.
-pub fn chunk_text(text: &str, chunk_size: usize, chunk_overlap: usize) -> Vec<String> {
-    let words: Vec<&str> = text.split_whitespace().collect();
+/// A chunk of text with metadata about its origin.
+#[derive(Debug, Clone)]
+pub struct TextChunk {
+    pub text: String,
+    pub page_number: Option<u32>,
+    pub chunk_index: usize,
+}
 
-    if words.is_empty() {
-        return vec![];
-    }
-    if words.len() <= chunk_size {
-        return vec![words.join(" ")];
-    }
+/// Split pages into semantically coherent chunks using sentence and paragraph
+/// boundaries.  `max_characters` is the target ceiling per chunk.
+/// `overlap_chars` prepends trailing context from the previous chunk.
+pub fn chunk_pages(
+    pages: &[PageText],
+    max_characters: usize,
+    overlap_chars: usize,
+) -> Vec<TextChunk> {
+    let splitter = TextSplitter::new(max_characters);
+    let mut result = Vec::new();
+    let mut global_idx: usize = 0;
+    let mut prev_chunk_tail = String::new();
 
-    let step = chunk_size.saturating_sub(chunk_overlap).max(1);
-    let mut chunks = Vec::new();
-    let mut start = 0;
-
-    while start < words.len() {
-        let end = (start + chunk_size).min(words.len());
-        let chunk = words[start..end].join(" ");
-        if !chunk.is_empty() {
-            chunks.push(chunk);
+    for page in pages {
+        if page.text.trim().is_empty() {
+            continue;
         }
-        if end >= words.len() {
-            break;
+
+        let raw_chunks: Vec<&str> = splitter.chunks(&page.text).collect();
+
+        for chunk_str in raw_chunks {
+            let trimmed = chunk_str.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let text = if overlap_chars > 0 && !prev_chunk_tail.is_empty() {
+                format!("{prev_chunk_tail}\n\n{trimmed}")
+            } else {
+                trimmed.to_string()
+            };
+
+            if overlap_chars > 0 {
+                let char_count = trimmed.chars().count();
+                let skip = char_count.saturating_sub(overlap_chars);
+                prev_chunk_tail = trimmed.chars().skip(skip).collect();
+            }
+
+            result.push(TextChunk {
+                text,
+                page_number: page.page_number,
+                chunk_index: global_idx,
+            });
+            global_idx += 1;
         }
-        start += step;
     }
 
-    chunks
+    result
 }
 
 #[cfg(test)]
@@ -158,26 +181,56 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_chunk_text_basic() {
-        let text = "one two three four five six seven eight nine ten";
-        let chunks = chunk_text(text, 4, 1);
-        assert_eq!(chunks.len(), 3);
-        assert_eq!(chunks[0], "one two three four");
-        assert_eq!(chunks[1], "four five six seven");
-        assert_eq!(chunks[2], "seven eight nine ten");
+    fn test_chunk_pages_basic() {
+        let pages = vec![PageText {
+            text: "Hello world. This is a test. Another sentence here.".to_string(),
+            page_number: Some(1),
+        }];
+        let chunks = chunk_pages(&pages, 5000, 0);
+        assert!(!chunks.is_empty());
+        assert_eq!(chunks[0].page_number, Some(1));
+        assert_eq!(chunks[0].chunk_index, 0);
     }
 
     #[test]
-    fn test_chunk_text_short() {
-        let text = "hello world";
-        let chunks = chunk_text(text, 100, 10);
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0], "hello world");
-    }
-
-    #[test]
-    fn test_chunk_text_empty() {
-        let chunks = chunk_text("", 10, 2);
+    fn test_chunk_pages_empty() {
+        let pages = vec![PageText {
+            text: "".to_string(),
+            page_number: Some(1),
+        }];
+        let chunks = chunk_pages(&pages, 1000, 0);
         assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_chunk_pages_multi_page() {
+        let pages = vec![
+            PageText {
+                text: "Page one content.".to_string(),
+                page_number: Some(1),
+            },
+            PageText {
+                text: "Page two content.".to_string(),
+                page_number: Some(2),
+            },
+        ];
+        let chunks = chunk_pages(&pages, 5000, 0);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].page_number, Some(1));
+        assert_eq!(chunks[1].page_number, Some(2));
+        assert_eq!(chunks[0].chunk_index, 0);
+        assert_eq!(chunks[1].chunk_index, 1);
+    }
+
+    #[test]
+    fn test_chunk_pages_with_overlap() {
+        let pages = vec![PageText {
+            text: "First sentence is quite long and has many words. Second sentence also has content.".to_string(),
+            page_number: Some(1),
+        }];
+        let chunks = chunk_pages(&pages, 50, 10);
+        if chunks.len() > 1 {
+            assert!(chunks[1].text.contains('\n'));
+        }
     }
 }

@@ -1,7 +1,7 @@
 services:
   embeddings:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
-    container_name: alpharust_embeddings
+    container_name: rustyrag_embeddings
     restart: unless-stopped
     command:
       [
@@ -10,13 +10,13 @@ services:
         "--pooling",
         "last-token",
         "--tokenization-workers",
-        "2",
+        "4",
         "--max-concurrent-requests",
-        "64",
+        "128",
         "--max-client-batch-size",
-        "8",
+        "16",
         "--max-batch-tokens",
-        "2048",
+        "4096",
         "--port",
         "80",
         "--auto-truncate",
@@ -27,6 +27,13 @@ services:
       - hf_cache:/data
     ports:
       - "7997:80"
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+          cpus: "4"
+        reservations:
+          memory: 1G
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:80/health"]
       interval: 20s
@@ -36,7 +43,7 @@ services:
 
   milvus-db:
     image: milvusdb/milvus:v2.4.21
-    container_name: alpharust_milvus
+    container_name: rustyrag_milvus
     command: ["milvus", "run", "standalone"]
     security_opt:
       - seccomp:unconfined
@@ -45,7 +52,7 @@ services:
       ETCD_DATA_DIR: /var/lib/milvus/etcd
       COMMON_STORAGETYPE: local
     volumes:
-      - alpharust_milvus_data:/var/lib/milvus
+      - rustyrag_milvus_data:/var/lib/milvus
     ports:
       - "19530:19530"
       - "9091:9091"
@@ -53,9 +60,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4G
+          memory: 8G
+          cpus: "4"
         reservations:
-          memory: 1G
+          memory: 2G
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
       interval: 30s
@@ -65,4 +73,4 @@ services:
 
 volumes:
   hf_cache:
-  alpharust_milvus_data:
+  rustyrag_milvus_data:

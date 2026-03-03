@@ -112,16 +112,16 @@ fn default_chunk_overlap() -> usize {
     200
 }
 fn default_contextual_provider() -> String {
-    "cerebras".to_string()
+    "groq".to_string()
 }
 fn default_contextual_model() -> String {
-    "gpt-oss-120b".to_string()
+    "llama-3.1-8b-instant".to_string()
 }
 fn default_contextual_concurrency() -> usize {
     4
 }
 fn default_contextual_max_doc_chars() -> usize {
-    12_000
+    6_000
 }
 
 impl Config {

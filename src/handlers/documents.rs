@@ -394,7 +394,7 @@ async fn generate_context_prefixes(
             async move {
                 let mut backoff_ms = INITIAL_BACKOFF_MS;
                 for attempt in 0..=MAX_RETRIES {
-                    match llm.chat(&prompt, &model, &provider, Some(256)).await {
+                    match llm.chat(&prompt, &model, &provider, Some(128)).await {
                         Ok(result) => return result.content,
                         Err(e) => {
                             let err_str = e.to_string();

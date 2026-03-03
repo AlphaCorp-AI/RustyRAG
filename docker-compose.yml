@@ -30,7 +30,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 6G
+          memory: 10G
           cpus: "6"
         reservations:
           memory: 1G

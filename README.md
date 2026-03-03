@@ -84,7 +84,7 @@ Most RAG stacks glue together Python microservices with high per-request overhea
 
 ```bash
 git clone https://github.com/AlphaCorp-AI/RustyRAG
-cd alpharust
+cd rustyrag
 cp .env.example .env
 ```
 
@@ -123,7 +123,7 @@ Upload a PDF, ask a question, and watch tokens stream back with source citations
 
 ## LLM Providers
 
-AlphaRustyRAG uses **Groq** and **Cerebras** as LLM providers because they offer the lowest inference latency available today -- Groq via custom LPU hardware and Cerebras via wafer-scale engine. Both expose OpenAI-compatible APIs, and you can switch between them per request.
+RustyRAG uses **Groq** and **Cerebras** as LLM providers because they offer the lowest inference latency available today -- Groq via custom LPU hardware and Cerebras via wafer-scale engine. Both expose OpenAI-compatible APIs, and you can switch between them per request.
 
 ### Groq
 - `llama-3.1-8b-instant`
@@ -143,25 +143,9 @@ Override provider and model per request using `"provider"` and `"model"` fields 
 
 ## Embeddings
 
-AlphaRustyRAG uses **jina-embeddings-v5-text-nano-retrieval** for vectorization. This model was selected for its exceptional performance-to-cost ratio: it ranks among the top small embedding models on the [MTEB benchmark](https://huggingface.co/spaces/mteb/leaderboard) while producing compact 768-dimensional vectors and running efficiently on CPU via HuggingFace Text Embeddings Inference (TEI).
+RustyRAG uses **jina-embeddings-v5-text-nano-retrieval** for vectorization. This model was selected for its exceptional performance-to-cost ratio: it ranks among the top small embedding models on the [MTEB benchmark](https://huggingface.co/spaces/mteb/leaderboard) while producing compact 768-dimensional vectors and running efficiently on CPU via HuggingFace Text Embeddings Inference (TEI).
 
-The model supports asymmetric retrieval (separate document/query task types), which AlphaRustyRAG uses automatically -- documents are embedded with the `retrieval.passage` task and queries with `retrieval.query`.
-
-### Citation
-
-If you use Jina Embeddings in your research, please cite:
-
-```bibtex
-@misc{akram2026jinaembeddingsv5texttasktargetedembeddingdistillation,
-      title={jina-embeddings-v5-text: Task-Targeted Embedding Distillation},
-      author={Mohammad Kalim Akram and Saba Sturua and Nastia Havriushenko and Quentin Herreros and Michael Günther and Maximilian Werk and Han Xiao},
-      year={2026},
-      eprint={2602.15547},
-      archivePrefix={arXiv},
-      primaryClass={cs.CL},
-      url={https://arxiv.org/abs/2602.15547},
-}
-```
+The model supports asymmetric retrieval (separate document/query task types), which RustyRAG uses automatically -- documents are embedded with the `retrieval.passage` task and queries with `retrieval.query`. See the [jina-embeddings-v5-text paper](https://arxiv.org/abs/2602.15547) for details on the architecture.
 
 ---
 
@@ -316,7 +300,7 @@ RUST_LOG=debug cargo run
 
 # Production build
 cargo build --release
-./target/release/alpharust
+./target/release/rustyrag
 ```
 
 ---

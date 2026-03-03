@@ -6,7 +6,7 @@
 
 A single async binary that ingests documents, generates contextual embeddings, stores vectors, and streams LLM answers grounded in your data.
 
-Built by **[Ignas Vaitukaitis](https://www.linkedin.com/in/ignas-vaitukaitis/)** at [AlphaCorp AI](https://alphacorp.ai)
+Built by **[Ignas Vaitukaitis](https://www.linkedin.com/in/ignas-vaitukaitis/)**
 
 <br/>
 

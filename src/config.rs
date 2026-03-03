@@ -52,6 +52,9 @@ pub struct Config {
     pub chunk_overlap: usize,
 
     // ── Contextual retrieval (opt-in) ──────────────────────────────
+    /// Enable LLM-generated context prefixes before embedding
+    #[serde(default)]
+    pub contextual_retrieval_enabled: bool,
     /// LLM provider for context generation ("groq" or "cerebras")
     #[serde(default = "default_contextual_provider")]
     pub contextual_retrieval_provider: String,
@@ -118,7 +121,7 @@ fn default_contextual_model() -> String {
     "llama-3.1-8b-instant".to_string()
 }
 fn default_contextual_concurrency() -> usize {
-    4
+    24
 }
 fn default_contextual_max_doc_chars() -> usize {
     6_000

@@ -10,7 +10,7 @@ services:
         "--pooling",
         "last-token",
         "--tokenization-workers",
-        "8",
+        "12",
         "--max-concurrent-requests",
         "128",
         "--max-client-batch-size",
@@ -31,7 +31,7 @@ services:
       resources:
         limits:
           memory: 3G
-          cpus: "4"
+          cpus: "6"
         reservations:
           memory: 1G
     healthcheck:

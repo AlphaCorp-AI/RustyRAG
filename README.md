@@ -1,6 +1,6 @@
 <div align="center">
 
-# AlphaRustyRAG
+# RustyRAG
 
 **High-performance RAG in Rust with contextual retrieval.**
 
@@ -23,9 +23,9 @@ Built by **[Ignas Vaitukaitis](https://www.linkedin.com/in/ignas-vaitukaitis/)**
 
 ---
 
-## Why AlphaRustyRAG?
+## Why RustyRAG?
 
-Most RAG stacks glue together Python microservices with high per-request overhead. AlphaRustyRAG collapses the entire pipeline -- document ingestion, semantic chunking, contextual retrieval, vector search, and LLM streaming -- into a **single async Rust binary**.
+Most RAG stacks glue together Python microservices with high per-request overhead. RustyRAG collapses the entire pipeline -- document ingestion, semantic chunking, contextual retrieval, vector search, and LLM streaming -- into a **single async Rust binary**.
 
 ### Key Features
 
@@ -46,7 +46,7 @@ Most RAG stacks glue together Python microservices with high per-request overhea
 ## Architecture
 
 ```
-                                AlphaRustyRAG
+                                RustyRAG
 ┌──────────┐         ┌─────────────────────────────────────────────────┐
 │          │   SSE   │                                                 │
 │  Client  │◄───────►│  Actix-web Router                              │
@@ -83,7 +83,7 @@ Most RAG stacks glue together Python microservices with high per-request overhea
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/AlphaCorp-AI/AlphaRustyRAG
+git clone https://github.com/AlphaCorp-AI/RustyRAG
 cd alpharust
 cp .env.example .env
 ```

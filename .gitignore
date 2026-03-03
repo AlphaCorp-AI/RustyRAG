@@ -1,2 +1,11 @@
 /target
 .env
+.env.local
+.venv/
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.iml

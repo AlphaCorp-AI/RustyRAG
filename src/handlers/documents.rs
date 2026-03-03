@@ -246,8 +246,11 @@ async fn embed_and_insert_chunks(
 
     tracing::info!("  {} → {} chunks, embedding…", source_file, chunks.len());
 
-    let context_prefixes =
-        generate_context_prefixes(&pages, &chunks, config, llm).await?;
+    let context_prefixes = if config.contextual_retrieval_enabled {
+        generate_context_prefixes(&pages, &chunks, config, llm).await?
+    } else {
+        vec![String::new(); chunks.len()]
+    };
     drop(pages);
 
     // ── Embed and insert in batches ─────────────────────────────

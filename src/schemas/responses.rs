@@ -1,7 +1,5 @@
-use chrono::{DateTime, Utc};
 use serde::Serialize;
 use utoipa::ToSchema;
-use uuid::Uuid;
 
 // ── Chat ────────────────────────────────────────────────────────────
 
@@ -33,24 +31,6 @@ pub struct HealthResponse {
     pub version: String,
 }
 
-// ── Users ───────────────────────────────────────────────────────────
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct UserResponse {
-    pub id: Uuid,
-    pub name: String,
-    pub email: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct TokenResponse {
-    /// Bearer JWT token
-    pub access_token: String,
-    pub token_type: String,
-}
-
 // ── Documents ──────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -60,10 +40,6 @@ pub struct DocumentUploadResponse {
     pub collection: String,
     /// Number of text chunks created and embedded
     pub total_chunks: usize,
-    /// Words per chunk that was used
-    pub chunk_size: usize,
-    /// Overlap words between chunks
-    pub chunk_overlap: usize,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -78,6 +54,11 @@ pub struct DocumentSearchHit {
     pub text: String,
     pub source_file: String,
     pub chunk_index: i64,
+    /// 1-based page number (0 if unknown, e.g. for .txt files)
+    pub page_number: i64,
+    /// LLM-generated context prefix (empty if contextual retrieval was not used)
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub context_prefix: String,
     /// Cosine similarity score (higher = more relevant)
     pub score: f32,
 }
@@ -105,8 +86,21 @@ pub struct RagSource {
     pub source_file: String,
     /// Position of the chunk within the file
     pub chunk_index: i64,
+    /// 1-based page number (0 if unknown)
+    pub page_number: i64,
     /// Cosine similarity score (higher = more relevant)
     pub score: f32,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct LlmModelEntry {
+    pub provider: String,
+    pub model: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct LlmModelsResponse {
+    pub models: Vec<LlmModelEntry>,
 }
 
 // ── Generic ─────────────────────────────────────────────────────────

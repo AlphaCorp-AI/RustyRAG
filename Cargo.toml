@@ -19,32 +19,22 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 validator = { version = "0.19", features = ["derive"] }
 
-# Database (async, compile-time checked)
-sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono", "migrate"] }
-
 # Env & Config
 dotenvy = "0.15"
 envy = "0.4"
 
-# HTTP client (for Groq, Cohere, Milvus, etc.)
+# HTTP client (for LLM, embeddings, Milvus, etc.)
 reqwest = { version = "0.12", features = ["json", "stream"] }
 
 # Utilities
-uuid = { version = "1", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 tracing-actix-web = "0.7"
 anyhow = "1"
 thiserror = "2"
 
-# Auth
-argon2 = "0.5"
-jsonwebtoken = "9"
-actix-web-httpauth = "0.8"
-
 # OpenAPI / Swagger
-utoipa = { version = "5", features = ["actix_extras", "uuid", "chrono"] }
+utoipa = { version = "5", features = ["actix_extras"] }
 utoipa-actix-web = "0.1"
 utoipa-swagger-ui = { version = "9", features = ["actix-web", "vendored"] }
 
@@ -53,3 +43,4 @@ pdf-extract = "0.7"
 zip = "2"
 tempfile = "3"
 libc = "0.2"
+text-splitter = "0.29.3"

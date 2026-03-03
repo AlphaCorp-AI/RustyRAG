@@ -12,6 +12,11 @@ pub struct MilvusClient {
     http: Client,
     base_url: String,
     dimension: i64,
+    metric_type: String,
+    index_type: String,
+    hnsw_m: i64,
+    hnsw_ef_construction: i64,
+    default_search_ef: i64,
 }
 
 /// A single document chunk ready to be inserted into Milvus.
@@ -20,6 +25,8 @@ pub struct DocumentChunk {
     pub text: String,
     pub source_file: String,
     pub chunk_index: i64,
+    pub page_number: i64,
+    pub context_prefix: String,
     pub embedding: Vec<f32>,
 }
 
@@ -29,7 +36,14 @@ pub struct SearchResult {
     pub text: String,
     pub source_file: String,
     pub chunk_index: i64,
+    pub page_number: i64,
+    pub context_prefix: String,
     pub score: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchOptions {
+    pub ef: Option<i64>,
 }
 
 // ── Milvus REST API response envelope ──────────────────────────────
@@ -44,11 +58,29 @@ struct MilvusResponse {
 }
 
 impl MilvusClient {
-    pub fn new(base_url: &str, dimension: i64) -> Self {
+    pub fn new(
+        base_url: &str,
+        dimension: i64,
+        metric_type: &str,
+        index_type: &str,
+        hnsw_m: i64,
+        hnsw_ef_construction: i64,
+        default_search_ef: i64,
+    ) -> Self {
         Self {
-            http: Client::new(),
+            http: Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(2))
+                .pool_idle_timeout(std::time::Duration::from_secs(90))
+                .pool_max_idle_per_host(32)
+                .build()
+                .expect("Failed to build reqwest client for Milvus"),
             base_url: base_url.trim_end_matches('/').to_string(),
             dimension,
+            metric_type: metric_type.to_string(),
+            index_type: index_type.to_string(),
+            hnsw_m,
+            hnsw_ef_construction,
+            default_search_ef,
         }
     }
 
@@ -114,6 +146,15 @@ impl MilvusClient {
                         "dataType": "Int64"
                     },
                     {
+                        "fieldName": "page_number",
+                        "dataType": "Int64"
+                    },
+                    {
+                        "fieldName": "context_prefix",
+                        "dataType": "VarChar",
+                        "elementTypeParams": { "max_length": "2048" }
+                    },
+                    {
                         "fieldName": "embedding",
                         "dataType": "FloatVector",
                         "elementTypeParams": { "dim": self.dimension.to_string() }
@@ -124,11 +165,11 @@ impl MilvusClient {
                 {
                     "fieldName": "embedding",
                     "indexName": "embedding_idx",
-                    "metricType": "COSINE",
+                    "metricType": self.metric_type,
                     "params": {
-                        "index_type": "HNSW",
-                        "M": 16,
-                        "efConstruction": 256
+                        "index_type": self.index_type,
+                        "M": self.hnsw_m,
+                        "efConstruction": self.hnsw_ef_construction
                     }
                 }
             ]
@@ -168,6 +209,8 @@ impl MilvusClient {
                     "text": c.text,
                     "source_file": c.source_file,
                     "chunk_index": c.chunk_index,
+                    "page_number": c.page_number,
+                    "context_prefix": c.context_prefix,
                     "embedding": c.embedding,
                 })
             })
@@ -205,16 +248,18 @@ impl MilvusClient {
         collection_name: &str,
         embedding: Vec<f32>,
         limit: i64,
+        options: Option<SearchOptions>,
     ) -> anyhow::Result<Vec<SearchResult>> {
         let url = format!("{}/v2/vectordb/entities/search", self.base_url);
+        let ef = options.and_then(|v| v.ef).unwrap_or(self.default_search_ef);
 
         let body = json!({
             "collectionName": collection_name,
             "data": [embedding],
             "limit": limit,
-            "outputFields": ["text", "source_file", "chunk_index"],
+            "outputFields": ["text", "source_file", "chunk_index", "page_number", "context_prefix"],
             "searchParams": {
-                "params": { "ef": 64 }
+                "params": { "ef": ef }
             },
         });
 
@@ -242,6 +287,8 @@ impl MilvusClient {
                         text: item["text"].as_str().unwrap_or("").to_string(),
                         source_file: item["source_file"].as_str().unwrap_or("").to_string(),
                         chunk_index: item["chunk_index"].as_i64().unwrap_or(0),
+                        page_number: item["page_number"].as_i64().unwrap_or(0),
+                        context_prefix: item["context_prefix"].as_str().unwrap_or("").to_string(),
                         score: item["distance"].as_f64().unwrap_or(0.0) as f32,
                     })
                     .collect()

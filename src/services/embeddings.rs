@@ -143,23 +143,42 @@ impl EmbeddingClient {
             task,
         };
 
-        let mut req = self.http.post(&self.api_url).json(&body);
-        if !self.api_key.is_empty() {
-            req = req.bearer_auth(&self.api_key);
+        let mut backoff = std::time::Duration::from_millis(500);
+        let max_retries = 8u32;
+
+        for attempt in 0..=max_retries {
+            let mut req = self.http.post(&self.api_url).json(&body);
+            if !self.api_key.is_empty() {
+                req = req.bearer_auth(&self.api_key);
+            }
+            let res = req.send().await.context("Failed to call embedding API")?;
+
+            let status = res.status();
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt < max_retries {
+                let text = res.text().await.unwrap_or_default();
+                tracing::debug!(
+                    "Embedding API overloaded, retrying in {}ms (attempt {}/{max_retries}): {text}",
+                    backoff.as_millis(),
+                    attempt + 1,
+                );
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(std::time::Duration::from_secs(30));
+                continue;
+            }
+
+            if !status.is_success() {
+                let text = res.text().await.unwrap_or_default();
+                anyhow::bail!("Embedding API returned {status}: {text}");
+            }
+
+            let data: EmbeddingResponse = res
+                .json()
+                .await
+                .context("Failed to parse embedding response")?;
+
+            return Ok(data.data.into_iter().map(|v| v.embedding).collect());
         }
-        let res = req.send().await.context("Failed to call embedding API")?;
 
-        let status = res.status();
-        if !status.is_success() {
-            let text = res.text().await.unwrap_or_default();
-            anyhow::bail!("Embedding API returned {status}: {text}");
-        }
-
-        let data: EmbeddingResponse = res
-            .json()
-            .await
-            .context("Failed to parse embedding response")?;
-
-        Ok(data.data.into_iter().map(|v| v.embedding).collect())
+        anyhow::bail!("Embedding API still overloaded after {max_retries} retries")
     }
 }

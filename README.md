@@ -23,7 +23,7 @@ Sub-200ms responses on localhost. Sub-600ms to a browser across continents. No G
 
 <br/><br/>
 
-Built by **[Ignas Vaitukaitis](https://www.linkedin.com/in/ignas-vaitukaitis/)** · [𝕏](https://x.com/zer0tokens) · **[AlphaCorp AI](https://alphacorp.ai)**
+Built by **Ignas Vaitukaitis** &nbsp; <a href="https://www.linkedin.com/in/ignas-vaitukaitis/"><img src="https://img.shields.io/badge/LinkedIn-0A66C2?style=flat-square&logo=linkedin&logoColor=white" alt="LinkedIn"/></a> <a href="https://x.com/zer0tokens"><img src="https://img.shields.io/badge/X-000000?style=flat-square&logo=x&logoColor=white" alt="X"/></a>
 
 </div>
 
@@ -380,6 +380,6 @@ MIT
 
 <div align="center">
   <br/>
-  Built by <a href="https://www.linkedin.com/in/ignas-vaitukaitis/"><strong>Ignas Vaitukaitis</strong></a> · <a href="https://x.com/zer0tokens">𝕏</a> · <a href="https://alphacorp.ai"><strong>AlphaCorp AI</strong></a>
+  Built by <strong>Ignas Vaitukaitis</strong> &nbsp; <a href="https://www.linkedin.com/in/ignas-vaitukaitis/"><img src="https://img.shields.io/badge/LinkedIn-0A66C2?style=flat-square&logo=linkedin&logoColor=white" alt="LinkedIn"/></a> <a href="https://x.com/zer0tokens"><img src="https://img.shields.io/badge/X-000000?style=flat-square&logo=x&logoColor=white" alt="X"/></a>
   <br/><br/>
 </div>

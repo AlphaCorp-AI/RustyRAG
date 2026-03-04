@@ -1,6 +1,6 @@
 services:
   embeddings:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.2
     container_name: rustyrag_embeddings
     restart: unless-stopped
     command:
@@ -16,6 +16,8 @@ services:
         "--auto-truncate",
         "--max-client-batch-size",
         "64",
+        "--max-batch-tokens",
+        "65536",
       ]
     environment:
       HF_HOME: /data

@@ -23,7 +23,7 @@ Sub-200ms responses on localhost. Sub-600ms to a browser across continents. No G
 
 <br/><br/>
 
-Built by **[Ignas Vaitukaitis](https://www.linkedin.com/in/ignas-vaitukaitis/)** at **[AlphaCorp AI](https://alphacorp.ai)**
+Built by **[Ignas Vaitukaitis](https://www.linkedin.com/in/ignas-vaitukaitis/)** · [𝕏](https://x.com/zer0tokens) · **[AlphaCorp AI](https://alphacorp.ai)**
 
 </div>
 
@@ -380,6 +380,6 @@ MIT
 
 <div align="center">
   <br/>
-  Built with Rust by <a href="https://alphacorp.ai"><strong>AlphaCorp AI</strong></a>
+  Built by <a href="https://www.linkedin.com/in/ignas-vaitukaitis/"><strong>Ignas Vaitukaitis</strong></a> · <a href="https://x.com/zer0tokens">𝕏</a> · <a href="https://alphacorp.ai"><strong>AlphaCorp AI</strong></a>
   <br/><br/>
 </div>

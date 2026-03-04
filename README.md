@@ -40,6 +40,34 @@ Built by **[Ignas Vaitukaitis](https://www.linkedin.com/in/ignas-vaitukaitis/)**
 | PDFs ingested | 977 |
 | Chunks in Milvus | 56,114 |
 
+### Localhost (curl → localhost:8080)
+
+RAG streaming responses with 3 sources, Cerebras `qwen-3-235b-a22b-instruct-2507`. TTFT = time to first token.
+
+<p>
+<img src="docs/localhost_time_1.png" alt="Localhost benchmark 1 — TTFT: 159ms, Total: 199ms" width="100%"/>
+</p>
+<p>
+<img src="docs/localhost_time_2.png" alt="Localhost benchmark 2 — TTFT: 165ms, Total: 187ms" width="100%"/>
+</p>
+<p>
+<img src="docs/localhost_time_3.png" alt="Localhost benchmark 3 — TTFT: 169ms, Total: 208ms" width="100%"/>
+</p>
+
+### Browser (Azure North Central US → Rio de Janeiro)
+
+Same 977-PDF corpus, same model. Chat UI showing TTFT and total response time per query.
+
+<p>
+<img src="docs/browser_time_1.png" alt="Browser benchmark 1" width="700"/>
+</p>
+<p>
+<img src="docs/browser_time_2.png" alt="Browser benchmark 2" width="700"/>
+</p>
+<p>
+<img src="docs/browser_time_3.png" alt="Browser benchmark 3" width="700"/>
+</p>
+
 ---
 
 ## What's New in v0.2
@@ -221,7 +249,11 @@ User question
 
 ## API Reference
 
-All endpoints live under `/api/v1`.
+All endpoints live under `/api/v1`. Interactive documentation via Swagger UI at [`/swagger-ui/`](http://localhost:8080/swagger-ui/).
+
+<p>
+<img src="docs/swagger-ui.png" alt="Swagger UI" width="700"/>
+</p>
 
 ### Documents
 
@@ -246,7 +278,7 @@ All endpoints live under `/api/v1`.
 |--------|----------|-------------|
 | `GET`  | `/health` | Liveness check |
 
-> For full request/response schemas, see the interactive **[Swagger UI](http://localhost:8080/swagger-ui/)**.
+> Full request/response schemas are available in the Swagger UI above.
 
 ---
 

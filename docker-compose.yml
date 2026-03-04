@@ -10,7 +10,7 @@ services:
         "--pooling",
         "last-token",
         "--tokenization-workers",
-        "6",
+        "12",
         "--port",
         "80",
         "--auto-truncate",
@@ -26,10 +26,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 10G
-          cpus: "6"
+          memory: 20G
+          cpus: "12"
         reservations:
-          memory: 1G
+          memory: 4G
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:80/health"]
       interval: 20s

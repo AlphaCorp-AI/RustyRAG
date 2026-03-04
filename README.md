@@ -2,24 +2,59 @@
 
 # RustyRAG
 
-**High-performance RAG in Rust with contextual retrieval.**
+### The lowest-latency open-source RAG app
 
-A single async binary that ingests documents, generates contextual embeddings, stores vectors, and streams LLM answers grounded in your data.
-
-Built by **[Ignas Vaitukaitis](https://www.linkedin.com/in/ignas-vaitukaitis/)**
+Sub-200ms responses on localhost. Sub-600ms to a browser across continents. No GPU required.
 
 <br/>
 
-<img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Rust"/>
-<img src="https://img.shields.io/badge/Actix--web-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Actix-web"/>
-<img src="https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white" alt="Groq"/>
-<img src="https://img.shields.io/badge/Cerebras-FF6B00?style=for-the-badge" alt="Cerebras"/>
-<img src="https://img.shields.io/badge/Jina_Embeddings-111827?style=for-the-badge" alt="Jina Embeddings"/>
-<img src="https://img.shields.io/badge/Milvus-00A1EA?style=for-the-badge&logo=apachekafka&logoColor=white" alt="Milvus"/>
-<img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker"/>
-<img src="https://img.shields.io/badge/Swagger_UI-85EA2D?style=for-the-badge&logo=swagger&logoColor=black" alt="Swagger"/>
+<a href="https://cerebras.ai"><img src="https://img.shields.io/badge/Cerebras-FF6B00?style=for-the-badge" alt="Cerebras"/></a>
+<a href="https://groq.com"><img src="https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white" alt="Groq"/></a>
+<a href="https://jina.ai"><img src="https://img.shields.io/badge/Jina_AI-111827?style=for-the-badge" alt="Jina AI"/></a>
+<a href="https://milvus.io"><img src="https://img.shields.io/badge/Milvus-00A1EA?style=for-the-badge" alt="Milvus"/></a>
+<a href="https://huggingface.co"><img src="https://img.shields.io/badge/HuggingFace-FFD21E?style=for-the-badge&logo=huggingface&logoColor=black" alt="HuggingFace"/></a>
+
+<br/><br/>
+
+<img src="https://img.shields.io/badge/Rust-000000?style=flat-square&logo=rust&logoColor=white" alt="Rust"/>
+<img src="https://img.shields.io/badge/Actix--web-000000?style=flat-square&logo=rust&logoColor=white" alt="Actix-web"/>
+<img src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker"/>
+<img src="https://img.shields.io/badge/Swagger_UI-85EA2D?style=flat-square&logo=swagger&logoColor=black" alt="Swagger"/>
+
+<br/><br/>
+
+Built by **[Ignas Vaitukaitis](https://www.linkedin.com/in/ignas-vaitukaitis/)** at **[AlphaCorp AI](https://alphacorp.ai)**
 
 </div>
+
+---
+
+## Benchmarks
+
+| Metric | Value |
+|--------|-------|
+| Localhost response time | **< 200ms** |
+| Remote response time (Azure North Central US → Rio de Janeiro) | **< 600ms** |
+| Instance | Azure F4s_v2 (no GPU) |
+| Sources per response | 3 |
+| PDFs ingested | 977 |
+| Chunks in Milvus | 56,114 |
+
+---
+
+## What's New in v0.2
+
+⚡ **Cerebras & Groq as LLM providers** — pick any model and go
+
+⚡ **Jina AI local embeddings** — replaced Cohere with `jina-embeddings-v5-text-nano-retrieval` for the best speed-to-quality ratio
+
+⚡ **Contextual retrieval** — LLM-generated context prefixes per chunk for better accuracy (opt-in)
+
+Also:
+- Built on **Rust + Actix-Web**
+- **Milvus** vector DB with **Swagger UI**
+- **Docker Compose** — pull, add `.env`, build, run
+- Supports **PDFs** and **zipped PDF bundles**
 
 ---
 

@@ -16,7 +16,7 @@ services:
         "--max-client-batch-size",
         "64",
         "--max-batch-tokens",
-        "4096",
+        "20000",
         "--port",
         "80",
         "--auto-truncate",

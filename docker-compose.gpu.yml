@@ -1,9 +1,11 @@
-# GPU override — use with: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+# GPU standalone — run with: docker compose -f docker-compose.gpu.yml up -d
 # Requirements: NVIDIA drivers (CUDA 12.2+), nvidia-container-toolkit
-# NOTE: Also set EMBEDDING_MODEL, EMBEDDING_DIMENSION in your .env (see .env.gpu.example)
+# NOTE: Set EMBEDDING_MODEL, EMBEDDING_DIMENSION in your .env (see .env.gpu.example)
 services:
   embeddings:
     image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9.2
+    container_name: rustyrag_embeddings
+    restart: unless-stopped
     command:
       [
         "--model-id",
@@ -20,6 +22,12 @@ services:
         "--max-batch-tokens",
         "65536",
       ]
+    environment:
+      HF_HOME: /data
+    volumes:
+      - hf_cache:/data
+    ports:
+      - "7997:80"
     deploy:
       resources:
         limits:
@@ -31,9 +39,29 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
 
   milvus-db:
     image: milvusdb/milvus:v2.4.21-gpu
+    container_name: rustyrag_milvus
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_USE_EMBED: "true"
+      ETCD_DATA_DIR: /var/lib/milvus/etcd
+      COMMON_STORAGETYPE: local
+    volumes:
+      - rustyrag_milvus_data:/var/lib/milvus
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    restart: unless-stopped
     deploy:
       resources:
         limits:
@@ -45,3 +73,13 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+volumes:
+  hf_cache:
+  rustyrag_milvus_data:

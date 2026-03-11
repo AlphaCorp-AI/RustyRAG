@@ -23,8 +23,8 @@ validator = { version = "0.19", features = ["derive"] }
 dotenvy = "0.15"
 envy = "0.4"
 
-# HTTP client (for LLM, embeddings, Milvus, etc.)
-reqwest = { version = "0.12", features = ["json", "stream"] }
+# HTTP client (for LLM, embeddings, Milvus, eval API)
+reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
 
 # Utilities
 tracing = "0.1"
@@ -40,7 +40,15 @@ utoipa-swagger-ui = { version = "9", features = ["actix-web", "vendored"] }
 
 # Document processing
 pdf-extract = "0.7"
-zip = "2"
+zip = { version = "2", features = ["deflate"] }
 tempfile = "3"
 libc = "0.2"
 text-splitter = "0.29.3"
+
+[[bin]]
+name = "rustyrag"
+path = "src/main.rs"
+
+[[bin]]
+name = "compete"
+path = "src/bin/compete.rs"

@@ -35,21 +35,45 @@ pub fn extract_pages_from_path(path: &Path, filename: &str) -> anyhow::Result<Ve
 
 fn extract_pdf_pages(path: &Path) -> anyhow::Result<Vec<PageText>> {
     let bytes = std::fs::read(path).context("Failed to read PDF file into memory")?;
+    let pdf_path = path.to_path_buf();
 
     let result =
         std::panic::catch_unwind(move || pdf_extract::extract_text_from_mem_by_pages(&bytes));
 
     match result {
-        Ok(Ok(pages)) => Ok(pages
-            .into_iter()
-            .enumerate()
-            .filter(|(_, text)| !text.trim().is_empty())
-            .map(|(idx, text)| PageText {
-                text,
-                page_number: Some((idx + 1) as u32),
-            })
-            .collect()),
-        Ok(Err(e)) => Err(anyhow::anyhow!("PDF extraction failed: {e}")),
+        Ok(Ok(pages)) => {
+            let mut output = Vec::new();
+            for (idx, text) in pages.iter().enumerate() {
+                let page_num = (idx + 1) as u32;
+                let trimmed = text.trim();
+
+                if trimmed.len() >= 50 {
+                    // Good digital text
+                    output.push(PageText {
+                        text: text.clone(),
+                        page_number: Some(page_num),
+                    });
+                } else if let Some(ocr_text) = ocr_pdf_page(&pdf_path, page_num) {
+                    // Scanned page — use OCR text
+                    output.push(PageText {
+                        text: ocr_text,
+                        page_number: Some(page_num),
+                    });
+                } else if !trimmed.is_empty() {
+                    // Fallback to whatever text we got
+                    output.push(PageText {
+                        text: text.clone(),
+                        page_number: Some(page_num),
+                    });
+                }
+            }
+            Ok(output)
+        }
+        Ok(Err(e)) => {
+            // pdf_extract failed entirely — try full OCR
+            tracing::warn!("PDF extraction failed ({e}), attempting OCR fallback");
+            ocr_all_pages(&pdf_path)
+        }
         Err(panic) => {
             let msg = if let Some(s) = panic.downcast_ref::<&str>() {
                 (*s).to_string()
@@ -58,11 +82,115 @@ fn extract_pdf_pages(path: &Path) -> anyhow::Result<Vec<PageText>> {
             } else {
                 "unknown panic".to_string()
             };
-            Err(anyhow::anyhow!(
-                "PDF extraction panicked (malformed PDF): {msg}"
-            ))
+            // Try OCR fallback on panic too
+            tracing::warn!("PDF extraction panicked ({msg}), attempting OCR fallback");
+            ocr_all_pages(&pdf_path)
         }
     }
+}
+
+// ── OCR support (requires pdftoppm + tesseract on system) ───────────
+
+/// OCR a single page of a PDF using pdftoppm + tesseract.
+/// Returns None if the tools are not available or OCR fails.
+fn ocr_pdf_page(pdf_path: &Path, page_number: u32) -> Option<String> {
+    use std::process::Command;
+
+    let tmp_dir = tempfile::tempdir().ok()?;
+    let prefix = tmp_dir.path().join("page");
+    let page_str = page_number.to_string();
+
+    // Render page to PNG at 300 DPI
+    let pdftoppm = Command::new("pdftoppm")
+        .args([
+            "-png",
+            "-f",
+            &page_str,
+            "-l",
+            &page_str,
+            "-r",
+            "300",
+        ])
+        .arg(pdf_path)
+        .arg(&prefix)
+        .output()
+        .ok()?;
+
+    if !pdftoppm.status.success() {
+        return None;
+    }
+
+    // Find the generated PNG file
+    let png_path = std::fs::read_dir(tmp_dir.path())
+        .ok()?
+        .filter_map(|e| e.ok())
+        .find(|e| {
+            e.path()
+                .extension()
+                .map(|x| x == "png")
+                .unwrap_or(false)
+        })?
+        .path();
+
+    // OCR with tesseract
+    let tesseract = Command::new("tesseract")
+        .arg(&png_path)
+        .arg("stdout")
+        .args(["--dpi", "300"])
+        .output()
+        .ok()?;
+
+    if !tesseract.status.success() {
+        return None;
+    }
+
+    let text = String::from_utf8_lossy(&tesseract.stdout).to_string();
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+/// OCR all pages of a PDF when digital extraction completely fails.
+fn ocr_all_pages(pdf_path: &Path) -> anyhow::Result<Vec<PageText>> {
+    use std::process::Command;
+
+    // Get page count via pdfinfo
+    let pdfinfo = Command::new("pdfinfo")
+        .arg(pdf_path)
+        .output()
+        .context("Failed to run pdfinfo — is poppler-utils installed?")?;
+
+    let info = String::from_utf8_lossy(&pdfinfo.stdout);
+    let page_count = info
+        .lines()
+        .find(|l| l.starts_with("Pages:"))
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|n| n.parse::<u32>().ok())
+        .unwrap_or(0);
+
+    if page_count == 0 {
+        anyhow::bail!("Could not determine page count for OCR");
+    }
+
+    let mut pages = Vec::new();
+    for page_num in 1..=page_count {
+        if let Some(text) = ocr_pdf_page(pdf_path, page_num) {
+            pages.push(PageText {
+                text,
+                page_number: Some(page_num),
+            });
+        }
+    }
+
+    if pages.is_empty() {
+        anyhow::bail!(
+            "Failed to extract any text from PDF (both digital and OCR extraction failed)"
+        );
+    }
+
+    Ok(pages)
 }
 
 // ── ZIP unpacking (to temp files for concurrent processing) ─────────

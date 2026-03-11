@@ -13,6 +13,8 @@ struct ChatCompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
 }
 
@@ -214,6 +216,8 @@ impl LlmClient {
             }],
             model,
             provider,
+            None,
+            None,
         )
         .await
     }
@@ -239,6 +243,37 @@ impl LlmClient {
             ],
             model,
             provider,
+            None,
+            None,
+        )
+        .await
+    }
+
+    /// Stream with explicit temperature and max_tokens control (used for competition).
+    pub async fn chat_stream_with_options(
+        &self,
+        system_prompt: &str,
+        user_message: &str,
+        model: &str,
+        provider: &str,
+        temperature: Option<f32>,
+        max_tokens: Option<u32>,
+    ) -> anyhow::Result<reqwest::Response> {
+        self.stream_messages(
+            &[
+                Message {
+                    role: "system".into(),
+                    content: system_prompt.into(),
+                },
+                Message {
+                    role: "user".into(),
+                    content: user_message.into(),
+                },
+            ],
+            model,
+            provider,
+            temperature,
+            max_tokens,
         )
         .await
     }
@@ -249,6 +284,8 @@ impl LlmClient {
         messages: &[Message],
         model: &str,
         provider: &str,
+        temperature: Option<f32>,
+        max_tokens: Option<u32>,
     ) -> anyhow::Result<reqwest::Response> {
         let resolved_provider = Self::provider_from_str(provider)?;
         let (url, api_key) = self.provider_auth_and_url(resolved_provider)?;
@@ -258,7 +295,8 @@ impl LlmClient {
         let body = ChatCompletionRequest {
             model: model_id,
             messages: messages.to_vec(),
-            max_tokens: None,
+            max_tokens,
+            temperature,
             stream: Some(true),
         };
 
@@ -297,6 +335,7 @@ impl LlmClient {
             model: model_id.clone(),
             messages: messages.to_vec(),
             max_tokens,
+            temperature: None,
             stream: None,
         };
 

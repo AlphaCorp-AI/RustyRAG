@@ -1,21 +1,14 @@
-mod config;
-mod errors;
-mod handlers;
-mod prompts;
-mod routes;
-mod schemas;
-mod services;
-
 use actix_web::{web, App, HttpServer};
 use tracing_actix_web::TracingLogger;
 use utoipa::openapi::tag::Tag;
 use utoipa_actix_web::{scope, AppExt};
 use utoipa_swagger_ui::SwaggerUi;
 
-use crate::config::Config;
-use crate::services::embeddings::EmbeddingClient;
-use crate::services::llm::LlmClient;
-use crate::services::milvus::MilvusClient;
+use rustyrag::config::Config;
+use rustyrag::routes;
+use rustyrag::services::embeddings::EmbeddingClient;
+use rustyrag::services::llm::LlmClient;
+use rustyrag::services::milvus::MilvusClient;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {

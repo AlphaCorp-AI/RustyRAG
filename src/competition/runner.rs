@@ -488,11 +488,12 @@ async fn answer_question(
     let clean_content = strip_sources_line(&stream_result.content);
     let answer = parse_answer(&clean_content, &question.answer_type);
 
-    // 6. Build retrieval refs from ALL retrieved chunks.
-    // Grounding uses F-beta (beta=2.5) — recall is 6.25x more important than precision.
-    // Missing a gold page costs far more than including extra pages.
-    // So we report ALL retrieved chunks' pages for maximum recall.
-    let retrieval_refs = build_retrieval_refs(&hits);
+    // 6. Build retrieval refs from top hits only.
+    // Grounding uses F-beta (beta=2.5) — recall matters more, but precision still counts.
+    // API spec: "Include only pages actually used to generate the answer"
+    // We use top 5 hits for grounding (high precision) while LLM sees all top_k for context.
+    let grounding_hits: Vec<_> = hits.iter().take(5).cloned().collect();
+    let retrieval_refs = build_retrieval_refs(&grounding_hits);
 
     // For unanswerable questions, set empty retrieval refs.
     // Spec: "set retrieved_chunk_pages to [] — matches empty gold set → grounding 1.0"

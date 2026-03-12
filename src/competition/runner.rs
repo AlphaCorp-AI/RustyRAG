@@ -371,7 +371,8 @@ pub async fn submit(comp: &CompetitionConfig) -> anyhow::Result<()> {
 pub async fn status(comp: &CompetitionConfig, uuid: &str) -> anyhow::Result<()> {
     let client = EvalClient::new(&comp.eval_base_url, &comp.eval_api_key);
     let result = client.get_status(uuid).await?;
-    println!("{}", serde_json::to_string_pretty(&result)?);
+    // Use stderr (tracing) since stdout is redirected to /dev/null
+    tracing::info!("Status: {}", serde_json::to_string_pretty(&result)?);
     Ok(())
 }
 

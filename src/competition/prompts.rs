@@ -59,11 +59,8 @@ pub fn build_competition_system_prompt(context: &str, answer_type: &str) -> Stri
 
     format!(
         "You are a precise legal document analyst. Answer the question using ONLY the provided context.\n\
-         Do not add information not present in the context. Do not mention or cite source labels in your answer.\n\n\
+         Do not add information not present in the context.\n\n\
          {type_instruction}\n\n\
-         After your answer, on a new line, write SOURCES: followed by the comma-separated excerpt numbers you used.\n\
-         Example: SOURCES: 1, 3, 7\n\
-         If unanswerable, write SOURCES: none\n\n\
          <context>\n{context}\n</context>"
     )
 }

@@ -13,7 +13,7 @@ use crate::services::llm::LlmClient;
 use crate::services::milvus::{DocumentChunk, MilvusClient, SearchOptions};
 
 use super::eval_client::EvalClient;
-use super::prompts::{build_competition_system_prompt, extract_cited_sources, parse_answer, strip_sources_line};
+use super::prompts::{build_competition_system_prompt, parse_answer, strip_sources_line};
 use super::submission::*;
 
 // ── Competition configuration ───────────────────────────────────────
@@ -465,12 +465,11 @@ async fn answer_question(
     // 4. Generate answer via streaming (for accurate TTFT)
     // Use temperature=0 for deterministic types (exact answers matter)
     // Use temperature=0.1 for free_text (slight creativity for natural language)
-    // Max tokens includes room for the SOURCES: line (~20 tokens)
     let (temperature, max_tokens) = match question.answer_type.as_str() {
-        "number" | "boolean" | "date" => (0.0_f32, Some(96_u32)),
-        "name" => (0.0, Some(128)),
+        "number" | "boolean" | "date" => (0.0_f32, Some(64_u32)),
+        "name" => (0.0, Some(64)),
         "names" => (0.0, Some(256)),
-        "free_text" => (0.1, Some(384)),
+        "free_text" => (0.1, Some(256)),
         _ => (0.0, Some(128)),
     };
 
@@ -485,33 +484,15 @@ async fn answer_question(
     )
     .await?;
 
-    // 5. Extract cited sources, strip SOURCES line, then parse answer
-    let cited_indices = extract_cited_sources(&stream_result.content);
+    // 5. Strip any SOURCES line the LLM may have added, then parse answer
     let clean_content = strip_sources_line(&stream_result.content);
     let answer = parse_answer(&clean_content, &question.answer_type);
 
-    // 6. Build retrieval refs from cited excerpts.
-    // Grounding uses F-beta (beta=2.5) — recall is prioritized over precision.
-    // So we include cited sources plus top-scoring hits for recall safety.
-    let grounding_hits: Vec<_> = if let Some(ref indices) = cited_indices {
-        // Start with cited sources
-        let mut selected: Vec<_> = indices
-            .iter()
-            .filter_map(|&i| hits.get(i))
-            .cloned()
-            .collect();
-        // Also include top 5 hits for recall (they're most likely relevant)
-        for hit in hits.iter().take(5) {
-            if !selected.iter().any(|s| s.source_file == hit.source_file && s.page_number == hit.page_number) {
-                selected.push(hit.clone());
-            }
-        }
-        selected
-    } else {
-        // Fallback: use top 10 hits if LLM didn't cite sources
-        hits.iter().take(10).cloned().collect()
-    };
-    let retrieval_refs = build_retrieval_refs(&grounding_hits);
+    // 6. Build retrieval refs from ALL retrieved chunks.
+    // Grounding uses F-beta (beta=2.5) — recall is 6.25x more important than precision.
+    // Missing a gold page costs far more than including extra pages.
+    // So we report ALL retrieved chunks' pages for maximum recall.
+    let retrieval_refs = build_retrieval_refs(&hits);
 
     // For unanswerable questions, set empty retrieval refs.
     // Spec: "set retrieved_chunk_pages to [] — matches empty gold set → grounding 1.0"

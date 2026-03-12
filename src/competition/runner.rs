@@ -62,7 +62,7 @@ fn default_competition_provider() -> String {
     "cerebras".to_string()
 }
 fn default_competition_top_k() -> i64 {
-    15
+    20
 }
 
 impl CompetitionConfig {
@@ -465,10 +465,12 @@ async fn answer_question(
     // 4. Generate answer via streaming (for accurate TTFT)
     // Use temperature=0 for deterministic types (exact answers matter)
     // Use temperature=0.1 for free_text (slight creativity for natural language)
+    // Max tokens includes room for the SOURCES: line (~20 tokens)
     let (temperature, max_tokens) = match question.answer_type.as_str() {
-        "number" | "boolean" | "name" | "date" => (0.0_f32, Some(64_u32)),
+        "number" | "boolean" | "date" => (0.0_f32, Some(96_u32)),
+        "name" => (0.0, Some(128)),
         "names" => (0.0, Some(256)),
-        "free_text" => (0.1, Some(256)),
+        "free_text" => (0.1, Some(384)),
         _ => (0.0, Some(128)),
     };
 

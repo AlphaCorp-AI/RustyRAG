@@ -12,34 +12,34 @@ pub fn build_competition_system_prompt(context: &str, answer_type: &str) -> Stri
         "number" => {
             "Return ONLY the numeric value (integer or decimal). No units, no explanation, no text.\n\
              Examples: 42, 3.14, 1000000\n\
-             Try your best to find and extract the answer from the context. Use reasoning and inference from the context when needed.\n\
-             Only respond with UNANSWERABLE if the context contains absolutely no relevant information."
+             Try your best to find and extract the answer. Use reasoning and inference from the context.\n\
+             Only respond with UNANSWERABLE if the context contains absolutely zero relevant information."
         }
         "boolean" => {
             "Return ONLY the word 'true' or 'false'. No explanation.\n\
              Try your best to determine the answer from the context. Use reasoning and inference when the answer is implied but not stated explicitly.\n\
-             For yes/no legal questions, lean toward answering based on what the context supports rather than saying UNANSWERABLE.\n\
-             Only respond with UNANSWERABLE if the context contains absolutely no relevant information."
+             Only respond with UNANSWERABLE if the context contains absolutely zero relevant information to answer the question."
         }
         "name" => {
-            "Return ONLY the exact name or entity. No explanation, no surrounding sentence.\n\
+            "Return ONLY the exact name or entity. No explanation, no surrounding sentence, no articles.\n\
              Copy the name verbatim from the context — do not paraphrase or abbreviate.\n\
              Examples of valid responses: \"John Smith\", \"CFI 010/2024\", \"DIFC Courts\"\n\
-             Try your best to find and extract the answer from the context.\n\
-             Only respond with UNANSWERABLE if the context contains absolutely no relevant information."
+             Try hard to identify the most relevant name/entity from the context that answers the question.\n\
+             Only respond with UNANSWERABLE if the context contains absolutely zero relevant information."
         }
         "names" => {
             "Return ONLY a semicolon-separated list of names exactly as they appear in the documents.\n\
              No explanation, no numbering, no extra text. Copy names verbatim from the context.\n\
+             Do NOT repeat the same name multiple times. Each name should appear only once.\n\
              Example format: Alice Smith; Bob Jones; Carol White\n\
              Try your best to find and extract all relevant names from the context.\n\
-             Only respond with UNANSWERABLE if the context contains absolutely no relevant information."
+             Only respond with UNANSWERABLE if the context contains absolutely zero relevant information."
         }
         "date" => {
             "Return ONLY the date in YYYY-MM-DD format. No explanation.\n\
              Example: 2024-03-15\n\
              Try your best to find and extract the date from the context.\n\
-             Only respond with UNANSWERABLE if the context contains absolutely no relevant information."
+             Only respond with UNANSWERABLE if the context contains absolutely zero relevant information."
         }
         "free_text" => {
             "Provide a clear, concise answer in 1-3 sentences (max 280 characters total).\n\
@@ -49,7 +49,7 @@ pub fn build_competition_system_prompt(context: &str, answer_type: &str) -> Stri
              - Do not state anything not present in the context.\n\
              - Try your best to answer using the available context. Use reasoning and inference when needed.\n\
              - If the answer is uncertain or partial, provide what you can and note the uncertainty.\n\
-             - Only if the context contains absolutely no relevant information, respond exactly with: \
+             - Only if the context contains absolutely no relevant information at all, respond exactly with: \
              \"There is no information on this question in the provided documents.\""
         }
         _ => {
@@ -71,16 +71,20 @@ pub fn build_competition_system_prompt(context: &str, answer_type: &str) -> Stri
 /// Extract the cited source excerpt numbers from the LLM response.
 /// Returns the set of 0-based indices (excerpt numbers are 1-based in the prompt).
 pub fn extract_cited_sources(raw: &str) -> Option<Vec<usize>> {
-    // Look for "SOURCES:" line
+    // Look for "SOURCES:" line anywhere in the response (not just last line)
     for line in raw.lines().rev() {
         let line = line.trim();
-        if let Some(rest) = line.strip_prefix("SOURCES:").or_else(|| line.strip_prefix("Sources:")) {
+        if let Some(rest) = line
+            .strip_prefix("SOURCES:")
+            .or_else(|| line.strip_prefix("Sources:"))
+            .or_else(|| line.strip_prefix("sources:"))
+        {
             let rest = rest.trim();
             if rest.eq_ignore_ascii_case("none") || rest.is_empty() {
                 return Some(vec![]);
             }
             let indices: Vec<usize> = rest
-                .split(',')
+                .split(|c: char| c == ',' || c == ' ')
                 .filter_map(|s| s.trim().parse::<usize>().ok())
                 .filter(|&n| n >= 1)
                 .map(|n| n - 1) // convert to 0-based
@@ -96,10 +100,14 @@ pub fn extract_cited_sources(raw: &str) -> Option<Vec<usize>> {
 /// Strip the SOURCES: line from the answer text before parsing.
 pub fn strip_sources_line(raw: &str) -> String {
     let mut lines: Vec<&str> = raw.lines().collect();
-    // Remove trailing SOURCES line(s)
+    // Remove trailing SOURCES line(s) and empty lines
     while let Some(last) = lines.last() {
         let trimmed = last.trim();
-        if trimmed.starts_with("SOURCES:") || trimmed.starts_with("Sources:") || trimmed.is_empty() {
+        if trimmed.starts_with("SOURCES:")
+            || trimmed.starts_with("Sources:")
+            || trimmed.starts_with("sources:")
+            || trimmed.is_empty()
+        {
             lines.pop();
         } else {
             break;
@@ -118,7 +126,9 @@ pub fn parse_answer(raw: &str, answer_type: &str) -> Value {
         || (answer_type != "free_text"
             && (text.to_lowercase().contains("cannot be found")
                 || text.to_lowercase().contains("not found in")
-                || text.to_lowercase().contains("no information")))
+                || text.to_lowercase().contains("no information")
+                || text.to_lowercase().contains("does not contain")
+                || text.to_lowercase().contains("not mentioned")))
     {
         if answer_type == "free_text" {
             // For free_text, return a natural language statement
@@ -134,10 +144,10 @@ pub fn parse_answer(raw: &str, answer_type: &str) -> Value {
 
     match answer_type {
         "number" => parse_number(text),
-        "boolean" => parse_boolean(text),
+        "boolean" => parse_boolean(text), // handled above but kept for completeness
         "name" => Value::String(parse_name(text)),
         "names" => parse_names(text),
-        "date" => Value::String(text.to_string()),
+        "date" => parse_date(text),
         "free_text" => {
             // Truncate to 280 chars
             let truncated: String = text.chars().take(280).collect();
@@ -198,8 +208,11 @@ fn parse_name(text: &str) -> String {
     let trimmed = text.trim().trim_matches('"');
 
     // If it looks like a short, clean answer (no sentence structure), use as-is
-    if !trimmed.contains(". ") && !trimmed.contains(" is ") && !trimmed.contains(" has ")
-        && !trimmed.contains(" was ") && !trimmed.contains(" are ")
+    if !trimmed.contains(". ")
+        && !trimmed.contains(" is ")
+        && !trimmed.contains(" has ")
+        && !trimmed.contains(" was ")
+        && !trimmed.contains(" are ")
         && trimmed.len() < 100
     {
         return trimmed.to_string();
@@ -266,12 +279,26 @@ fn parse_boolean(text: &str) -> Value {
     } else if lower.contains("false") {
         Value::Bool(false)
     } else {
-        Value::String(text.to_string())
+        Value::Null
     }
 }
 
+/// Parse date, trying to extract YYYY-MM-DD from possibly longer text.
+fn parse_date(text: &str) -> Value {
+    let trimmed = text.trim();
+    // Try to find a YYYY-MM-DD pattern in the text
+    for word in trimmed.split_whitespace() {
+        let clean = word.trim_matches(|c: char| !c.is_ascii_digit() && c != '-');
+        if clean.len() == 10 && clean.chars().nth(4) == Some('-') && clean.chars().nth(7) == Some('-')
+        {
+            return Value::String(clean.to_string());
+        }
+    }
+    Value::String(trimmed.to_string())
+}
+
 fn parse_names(text: &str) -> Value {
-    let names: Vec<Value> = text
+    let names: Vec<String> = text
         .split(';')
         .flat_map(|part| {
             if part.contains(',') && !part.contains(' ') {
@@ -284,13 +311,20 @@ fn parse_names(text: &str) -> Value {
             }
         })
         .filter(|s| !s.is_empty())
+        .collect();
+
+    // Dedup while preserving order
+    let mut seen = std::collections::HashSet::new();
+    let deduped: Vec<Value> = names
+        .into_iter()
+        .filter(|name| seen.insert(name.clone()))
         .map(Value::String)
         .collect();
 
-    if names.is_empty() {
+    if deduped.is_empty() {
         Value::Array(vec![Value::String(text.to_string())])
     } else {
-        Value::Array(names)
+        Value::Array(deduped)
     }
 }
 
@@ -320,10 +354,13 @@ mod tests {
     #[test]
     fn test_parse_names() {
         let result = parse_answer("Alice Smith; Bob Jones", "names");
-        assert_eq!(
-            result,
-            serde_json::json!(["Alice Smith", "Bob Jones"])
-        );
+        assert_eq!(result, serde_json::json!(["Alice Smith", "Bob Jones"]));
+    }
+
+    #[test]
+    fn test_parse_names_dedup() {
+        let result = parse_answer("Alice Smith; Alice Smith; Bob Jones", "names");
+        assert_eq!(result, serde_json::json!(["Alice Smith", "Bob Jones"]));
     }
 
     #[test]
@@ -334,5 +371,19 @@ mod tests {
         } else {
             panic!("Expected string");
         }
+    }
+
+    #[test]
+    fn test_parse_name_sentence() {
+        let result = parse_name("CA 004/2025 has an earlier Date of Issue.");
+        assert_eq!(result, "CA 004/2025");
+    }
+
+    #[test]
+    fn test_parse_date_extraction() {
+        assert_eq!(
+            parse_date("The date is 2024-03-15."),
+            Value::String("2024-03-15".to_string())
+        );
     }
 }

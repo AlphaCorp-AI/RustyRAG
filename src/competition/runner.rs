@@ -454,29 +454,29 @@ async fn answer_question(
         .await
         .context("Milvus search failed")?;
 
-    // 3. Rerank hits with cross-encoder for much better relevance ordering
-    let (context_hits, grounding_hits) = if reranker.is_configured() && !hits.is_empty() {
+    // 3. Rerank hits with cross-encoder for better context ordering.
+    // IMPORTANT: Use reranked order for LLM context (better answers),
+    // but use ORIGINAL Milvus embedding order for grounding pages
+    // (embedding similarity better matches gold pages than cross-encoder).
+    let context_hits = if reranker.is_configured() && !hits.is_empty() {
         let docs: Vec<String> = hits.iter().map(|h| h.text.clone()).collect();
         match reranker.rerank(&question.question, &docs, hits.len()).await {
             Ok(reranked) => {
-                // Use reranked order for context (top 10) and grounding (top 5)
-                let reranked_hits: Vec<_> = reranked
+                reranked
                     .iter()
                     .filter_map(|r| hits.get(r.original_index).cloned())
-                    .collect();
-                let grounding: Vec<_> = reranked_hits.iter().take(5).cloned().collect();
-                (reranked_hits, grounding)
+                    .collect()
             }
             Err(e) => {
                 tracing::warn!("Reranker failed, using original order: {e}");
-                let grounding: Vec<_> = hits.iter().take(5).cloned().collect();
-                (hits.clone(), grounding)
+                hits.clone()
             }
         }
     } else {
-        let grounding: Vec<_> = hits.iter().take(5).cloned().collect();
-        (hits.clone(), grounding)
+        hits.clone()
     };
+    // Grounding: use original Milvus top hits (embedding similarity order)
+    let grounding_hits: Vec<_> = hits.iter().take(10).cloned().collect();
 
     // 4. Build context from (reranked) chunks
     let context = context_hits
@@ -519,7 +519,7 @@ async fn answer_question(
     let clean_content = strip_sources_line(&stream_result.content);
     let answer = parse_answer(&clean_content, &question.answer_type);
 
-    // 7. Build retrieval refs from reranked top hits
+    // 7. Build retrieval refs from original Milvus top hits (not reranked)
     let retrieval_refs = build_retrieval_refs(&grounding_hits);
 
     // For unanswerable questions, set empty retrieval refs.
@@ -537,7 +537,7 @@ async fn answer_question(
     let final_refs = if is_unanswerable {
         vec![]
     } else if retrieval_refs.is_empty() {
-        build_retrieval_refs(&context_hits.iter().take(1).cloned().collect::<Vec<_>>())
+        build_retrieval_refs(&hits.iter().take(1).cloned().collect::<Vec<_>>())
     } else {
         retrieval_refs
     };

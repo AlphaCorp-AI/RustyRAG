@@ -47,13 +47,13 @@ services:
       start_period: 120s
 
   reranker:
-    image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9.2
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.2
     container_name: rustyrag_reranker
     restart: unless-stopped
     command:
       [
         "--model-id",
-        "jinaai/jina-reranker-v3",
+        "BAAI/bge-reranker-v2-m3",
         "--port",
         "80",
         "--auto-truncate",
@@ -67,14 +67,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 8G
+          memory: 4G
           cpus: "4"
-        reservations:
-          memory: 2G
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:80/health"]
       interval: 20s

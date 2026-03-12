@@ -53,7 +53,7 @@ services:
     command:
       [
         "--model-id",
-        "BAAI/bge-reranker-v2-m3",
+        "BAAI/bge-reranker-base",
         "--port",
         "80",
         "--auto-truncate",

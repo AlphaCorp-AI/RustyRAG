@@ -49,7 +49,7 @@ pub fn build_competition_system_prompt(context: &str, answer_type: &str) -> Stri
              - Do not state anything not present in the context.\n\
              - Try your best to answer using the available context. Use reasoning and inference when needed.\n\
              - If the answer is uncertain or partial, provide what you can and note the uncertainty.\n\
-             - Only if the context contains absolutely no relevant information at all, respond exactly with: \
+             - Only if the context contains absolutely no relevant information, respond exactly with: \
              \"There is no information on this question in the provided documents.\""
         }
         _ => {
@@ -121,20 +121,17 @@ pub fn parse_answer(raw: &str, answer_type: &str) -> Value {
     let text = raw.trim();
 
     // Check for unanswerable marker
+    let lower = text.to_lowercase();
     if text.eq_ignore_ascii_case("unanswerable")
         || text.contains("UNANSWERABLE")
-        || (answer_type != "free_text"
-            && (text.to_lowercase().contains("cannot be found")
-                || text.to_lowercase().contains("not found in")
-                || text.to_lowercase().contains("no information")
-                || text.to_lowercase().contains("does not contain")
-                || text.to_lowercase().contains("not mentioned")))
+        || lower.contains("cannot be found")
+        || lower.contains("not found in")
+        || lower.contains("no information")
+        || lower.contains("does not contain")
+        || lower.contains("not mentioned")
     {
         if answer_type == "free_text" {
-            // For free_text, return a natural language statement
-            if text.contains("no information") || text.contains("cannot be found") {
-                return Value::String(text.to_string());
-            }
+            // Spec: "For unanswerable free_text questions, return a natural-language statement"
             return Value::String(
                 "There is no information on this question in the provided documents.".to_string(),
             );

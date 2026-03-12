@@ -11,6 +11,7 @@ use crate::services::document::{chunk_pages, extract_pages_from_path, PageText, 
 use crate::services::embeddings::{EmbeddingClient, InputType};
 use crate::services::llm::LlmClient;
 use crate::services::milvus::{DocumentChunk, MilvusClient, SearchOptions};
+use crate::services::reranker::RerankerClient;
 
 use super::eval_client::EvalClient;
 use super::prompts::{build_competition_system_prompt, parse_answer, strip_sources_line};
@@ -270,6 +271,13 @@ pub async fn answer(config: &Config, comp: &CompetitionConfig) -> anyhow::Result
     let milvus = create_milvus(config);
     let embeddings = create_embeddings(config);
     let llm = LlmClient::new(config.clone());
+    let reranker = RerankerClient::new(&config.reranker_api_url, &config.jina_api_key, &config.reranker_model);
+
+    if reranker.is_configured() {
+        tracing::info!("Reranker enabled at {}", config.reranker_api_url);
+    } else {
+        tracing::warn!("Reranker not configured — skipping reranking step");
+    }
 
     // Load questions
     let questions = load_questions(&comp.questions_path)?;
@@ -282,8 +290,8 @@ pub async fn answer(config: &Config, comp: &CompetitionConfig) -> anyhow::Result
     };
 
     let mut builder = SubmissionBuilder::new(
-        "RustyRAG: GPU-accelerated Rust RAG with Jina v5 embeddings, \
-         Milvus GPU vector search, contextual retrieval, and Cerebras LLM inference",
+        "RustyRAG: GPU-accelerated Rust RAG with Jina v5 embeddings, Jina reranker v3, \
+         Milvus GPU vector search, and Cerebras LLM inference",
     );
 
     for (idx, question) in questions.iter().enumerate() {
@@ -295,7 +303,7 @@ pub async fn answer(config: &Config, comp: &CompetitionConfig) -> anyhow::Result
             question.answer_type
         );
 
-        match answer_question(&milvus, &embeddings, &llm, question, comp, config, embedding_type)
+        match answer_question(&milvus, &embeddings, &llm, &reranker, question, comp, config, embedding_type)
             .await
         {
             Ok(submission_answer) => {
@@ -411,6 +419,7 @@ async fn answer_question(
     milvus: &MilvusClient,
     embeddings: &EmbeddingClient,
     llm: &LlmClient,
+    reranker: &RerankerClient,
     question: &Question,
     comp: &CompetitionConfig,
     config: &Config,
@@ -444,9 +453,32 @@ async fn answer_question(
         .await
         .context("Milvus search failed")?;
 
-    // 3. Build context from retrieved chunks
-    // Use minimal labels to avoid leaking metadata into deterministic answers
-    let context = hits
+    // 3. Rerank hits with cross-encoder for much better relevance ordering
+    let (context_hits, grounding_hits) = if reranker.is_configured() && !hits.is_empty() {
+        let docs: Vec<String> = hits.iter().map(|h| h.text.clone()).collect();
+        match reranker.rerank(&question.question, &docs, hits.len()).await {
+            Ok(reranked) => {
+                // Use reranked order for context (top 10) and grounding (top 5)
+                let reranked_hits: Vec<_> = reranked
+                    .iter()
+                    .filter_map(|r| hits.get(r.original_index).cloned())
+                    .collect();
+                let grounding: Vec<_> = reranked_hits.iter().take(5).cloned().collect();
+                (reranked_hits, grounding)
+            }
+            Err(e) => {
+                tracing::warn!("Reranker failed, using original order: {e}");
+                let grounding: Vec<_> = hits.iter().take(5).cloned().collect();
+                (hits.clone(), grounding)
+            }
+        }
+    } else {
+        let grounding: Vec<_> = hits.iter().take(5).cloned().collect();
+        (hits.clone(), grounding)
+    };
+
+    // 4. Build context from (reranked) chunks
+    let context = context_hits
         .iter()
         .enumerate()
         .map(|(i, h)| {
@@ -462,9 +494,7 @@ async fn answer_question(
 
     let system_prompt = build_competition_system_prompt(&context, &question.answer_type);
 
-    // 4. Generate answer via streaming (for accurate TTFT)
-    // Use temperature=0 for deterministic types (exact answers matter)
-    // Use temperature=0.1 for free_text (slight creativity for natural language)
+    // 5. Generate answer via streaming (for accurate TTFT)
     let (temperature, max_tokens) = match question.answer_type.as_str() {
         "number" | "boolean" | "date" => (0.0_f32, Some(64_u32)),
         "name" => (0.0, Some(64)),
@@ -484,19 +514,14 @@ async fn answer_question(
     )
     .await?;
 
-    // 5. Strip any SOURCES line the LLM may have added, then parse answer
+    // 6. Strip any SOURCES line the LLM may have added, then parse answer
     let clean_content = strip_sources_line(&stream_result.content);
     let answer = parse_answer(&clean_content, &question.answer_type);
 
-    // 6. Build retrieval refs from top hits only.
-    // Grounding uses F-beta (beta=2.5) — recall matters more, but precision still counts.
-    // API spec: "Include only pages actually used to generate the answer"
-    // We use top 5 hits for grounding (high precision) while LLM sees all top_k for context.
-    let grounding_hits: Vec<_> = hits.iter().take(5).cloned().collect();
+    // 7. Build retrieval refs from reranked top hits
     let retrieval_refs = build_retrieval_refs(&grounding_hits);
 
     // For unanswerable questions, set empty retrieval refs.
-    // Spec: "set retrieved_chunk_pages to [] — matches empty gold set → grounding 1.0"
     let is_unanswerable = answer.is_null()
         || (question.answer_type == "free_text"
             && answer
@@ -509,12 +534,9 @@ async fn answer_question(
                 .unwrap_or(false));
 
     let final_refs = if is_unanswerable {
-        // Spec: empty retrieval refs for unanswerable → grounding 1.0
         vec![]
     } else if retrieval_refs.is_empty() {
-        // Spec: non-empty retrieval required for answerable questions, else telemetry penalty.
-        // Fallback to top hit to avoid penalty.
-        build_retrieval_refs(&hits.iter().take(1).cloned().collect::<Vec<_>>())
+        build_retrieval_refs(&context_hits.iter().take(1).cloned().collect::<Vec<_>>())
     } else {
         retrieval_refs
     };
@@ -620,6 +642,10 @@ async fn consume_sse_stream(response: reqwest::Response) -> anyhow::Result<Strea
             .map(|w| (w[1] - w[0]).as_millis() as u64)
             .collect();
         diffs.iter().sum::<u64>() / diffs.len() as u64
+    } else if output_tokens > 1 {
+        // Estimate tpot from generation time / output tokens when streaming is too fast
+        let gen_time_ms = total_time.as_millis() as u64 - ttft_ms;
+        gen_time_ms / (output_tokens as u64 - 1).max(1)
     } else {
         0
     };

@@ -6,6 +6,12 @@ pub struct Config {
     pub groq_api_key: String,
     #[serde(default)]
     pub cerebras_api_key: String,
+    #[serde(default)]
+    pub jina_api_key: String,
+    #[serde(default = "default_reranker_api_url")]
+    pub reranker_api_url: String,
+    #[serde(default = "default_reranker_model")]
+    pub reranker_model: String,
     #[serde(default = "default_host")]
     pub host: String,
     #[serde(default = "default_port")]
@@ -71,6 +77,12 @@ pub struct Config {
     pub contextual_retrieval_max_doc_chars: usize,
 }
 
+fn default_reranker_api_url() -> String {
+    "http://localhost:7998".to_string()
+}
+fn default_reranker_model() -> String {
+    "jina-reranker-v3".to_string()
+}
 fn default_host() -> String {
     "127.0.0.1".to_string()
 }

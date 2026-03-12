@@ -46,6 +46,42 @@ services:
       retries: 10
       start_period: 120s
 
+  reranker:
+    image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9.2
+    container_name: rustyrag_reranker
+    restart: unless-stopped
+    command:
+      [
+        "--model-id",
+        "jinaai/jina-reranker-v3",
+        "--port",
+        "80",
+        "--auto-truncate",
+      ]
+    environment:
+      HF_HOME: /data
+    volumes:
+      - hf_cache:/data
+    ports:
+      - "7998:80"
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+          cpus: "4"
+        reservations:
+          memory: 2G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
   milvus-db:
     image: milvusdb/milvus:v2.4.21-gpu
     container_name: rustyrag_milvus

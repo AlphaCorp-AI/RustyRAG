@@ -5,41 +5,41 @@ use serde_json::Value;
 /// For free_text, targets all 5 LLM judge criteria:
 ///   1. Correctness  2. Completeness  3. Grounding  4. Confidence calibration  5. Clarity
 ///
-/// The prompt asks the LLM to cite which excerpt numbers it used via a SOURCES line,
-/// so we can restrict `retrieved_chunk_pages` to only the pages actually used (improving grounding).
 pub fn build_competition_system_prompt(context: &str, answer_type: &str) -> String {
     let type_instruction = match answer_type {
         "number" => {
             "Return ONLY the numeric value (integer or decimal). No units, no explanation, no text.\n\
              Examples: 42, 3.14, 1000000\n\
-             Try your best to find and extract the answer. Use reasoning and inference from the context.\n\
-             Only respond with UNANSWERABLE if the context contains absolutely zero relevant information."
+             You MUST find and extract the answer. Use reasoning, calculation, and inference from the context.\n\
+             IMPORTANT: Almost always the answer IS in the context. Look carefully through ALL excerpts.\n\
+             Only respond with UNANSWERABLE if you have read every excerpt and there is truly zero relevant information."
         }
         "boolean" => {
             "Return ONLY the word 'true' or 'false'. No explanation.\n\
-             Try your best to determine the answer from the context. Use reasoning and inference when the answer is implied but not stated explicitly.\n\
-             Only respond with UNANSWERABLE if the context contains absolutely zero relevant information to answer the question."
+             You MUST determine the answer from the context. Use reasoning and inference when the answer is implied.\n\
+             IMPORTANT: Almost always the answer IS in the context. Look carefully through ALL excerpts.\n\
+             Only respond with UNANSWERABLE if you have read every excerpt and there is truly zero relevant information."
         }
         "name" => {
             "Return ONLY the exact name or entity. No explanation, no surrounding sentence, no articles.\n\
              Copy the name verbatim from the context — do not paraphrase or abbreviate.\n\
              Examples of valid responses: \"John Smith\", \"CFI 010/2024\", \"DIFC Courts\"\n\
-             Try hard to identify the most relevant name/entity from the context that answers the question.\n\
-             Only respond with UNANSWERABLE if the context contains absolutely zero relevant information."
+             IMPORTANT: Almost always the answer IS in the context. Look carefully through ALL excerpts.\n\
+             Only respond with UNANSWERABLE if you have read every excerpt and there is truly zero relevant information."
         }
         "names" => {
             "Return ONLY a semicolon-separated list of names exactly as they appear in the documents.\n\
              No explanation, no numbering, no extra text. Copy names verbatim from the context.\n\
              Do NOT repeat the same name multiple times. Each name should appear only once.\n\
              Example format: Alice Smith; Bob Jones; Carol White\n\
-             Try your best to find and extract all relevant names from the context.\n\
-             Only respond with UNANSWERABLE if the context contains absolutely zero relevant information."
+             IMPORTANT: Almost always the answer IS in the context. Look carefully through ALL excerpts.\n\
+             Only respond with UNANSWERABLE if you have read every excerpt and there is truly zero relevant information."
         }
         "date" => {
             "Return ONLY the date in YYYY-MM-DD format. No explanation.\n\
              Example: 2024-03-15\n\
-             Try your best to find and extract the date from the context.\n\
-             Only respond with UNANSWERABLE if the context contains absolutely zero relevant information."
+             IMPORTANT: Almost always the answer IS in the context. Look carefully through ALL excerpts.\n\
+             Only respond with UNANSWERABLE if you have read every excerpt and there is truly zero relevant information."
         }
         "free_text" => {
             "Provide a clear, concise answer in 1-3 sentences (max 280 characters total).\n\
@@ -47,8 +47,9 @@ pub fn build_competition_system_prompt(context: &str, answer_type: &str) -> Stri
              - Every claim must be directly supported by the provided context.\n\
              - Address all aspects of the question completely.\n\
              - Do not state anything not present in the context.\n\
-             - Try your best to answer using the available context. Use reasoning and inference when needed.\n\
+             - You MUST answer using the available context. Use reasoning and inference when needed.\n\
              - If the answer is uncertain or partial, provide what you can and note the uncertainty.\n\
+             - IMPORTANT: Almost always the answer IS in the context. Try hard before giving up.\n\
              - Only if the context contains absolutely no relevant information, respond exactly with: \
              \"There is no information on this question in the provided documents.\""
         }

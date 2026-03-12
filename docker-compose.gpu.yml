@@ -53,7 +53,7 @@ services:
     command:
       [
         "--model-id",
-        "BAAI/bge-reranker-base",
+        "Alibaba-NLP/gte-reranker-modernbert-base",
         "--port",
         "80",
         "--auto-truncate",

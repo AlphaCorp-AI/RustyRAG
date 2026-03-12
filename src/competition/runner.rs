@@ -13,7 +13,7 @@ use crate::services::llm::LlmClient;
 use crate::services::milvus::{DocumentChunk, MilvusClient, SearchOptions};
 
 use super::eval_client::EvalClient;
-use super::prompts::{build_competition_system_prompt, parse_answer};
+use super::prompts::{build_competition_system_prompt, extract_cited_sources, parse_answer, strip_sources_line};
 use super::submission::*;
 
 // ── Competition configuration ───────────────────────────────────────
@@ -483,15 +483,26 @@ async fn answer_question(
     )
     .await?;
 
-    // 5. Parse answer by type
-    let answer = parse_answer(&stream_result.content, &question.answer_type);
+    // 5. Extract cited sources, strip SOURCES line, then parse answer
+    let cited_indices = extract_cited_sources(&stream_result.content);
+    let clean_content = strip_sources_line(&stream_result.content);
+    let answer = parse_answer(&clean_content, &question.answer_type);
 
-    // 6. Build retrieval refs
-    let retrieval_refs = build_retrieval_refs(&hits);
+    // 6. Build retrieval refs — only from cited excerpts for better grounding precision
+    let cited_hits: Vec<_> = if let Some(ref indices) = cited_indices {
+        indices
+            .iter()
+            .filter_map(|&i| hits.get(i))
+            .cloned()
+            .collect()
+    } else {
+        // Fallback: use all hits if LLM didn't cite sources
+        hits.clone()
+    };
+    let retrieval_refs = build_retrieval_refs(&cited_hits);
 
     // For unanswerable questions, set empty retrieval refs.
     // Spec: "set retrieved_chunk_pages to [] — matches empty gold set → grounding 1.0"
-    // This applies to null answers AND free_text unanswerable statements.
     let is_unanswerable = answer.is_null()
         || (question.answer_type == "free_text"
             && answer

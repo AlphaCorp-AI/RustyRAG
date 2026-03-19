@@ -4,16 +4,6 @@ use utoipa::ToSchema;
 use crate::services::llm::ApiUsage;
 use crate::services::milvus::SearchResult;
 
-// ── Chat ────────────────────────────────────────────────────────────
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct ChatResponse {
-    #[schema(example = "openai/gpt-oss-20b")]
-    pub model: String,
-    pub message: String,
-    pub usage: Option<Usage>,
-}
-
 #[derive(Debug, Serialize, ToSchema)]
 pub struct Usage {
     pub prompt_tokens: u32,

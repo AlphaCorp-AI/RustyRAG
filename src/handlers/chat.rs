@@ -5,8 +5,8 @@ use validator::Validate;
 use crate::config::Config;
 use crate::errors::AppError;
 use crate::prompts::build_rag_system_prompt;
-use crate::schemas::requests::{ChatRagRequest, ChatRequest};
-use crate::schemas::responses::{ChatRagResponse, ChatResponse, ErrorResponse, RagSource, Usage};
+use crate::schemas::requests::ChatRagRequest;
+use crate::schemas::responses::{ChatRagResponse, ErrorResponse, RagSource, Usage};
 use crate::schemas::responses::{LlmModelEntry, LlmModelsResponse};
 use crate::services::embeddings::{EmbeddingClient, InputType};
 use crate::services::llm::LlmClient;
@@ -167,7 +167,7 @@ async fn rerank_hits(
         .collect())
 }
 
-// ── Plain endpoints ────────────────────────────────────────────────
+// ── Endpoints ──────────────────────────────────────────────────────
 
 #[utoipa::path(
     get,
@@ -175,7 +175,7 @@ async fn rerank_hits(
     responses(
         (status = 200, description = "Supported LLMs grouped by provider", body = LlmModelsResponse),
     ),
-    tag = "chat"
+    tag = "Chat"
 )]
 #[get("/llms")]
 pub async fn list_llms() -> HttpResponse {
@@ -189,68 +189,6 @@ pub async fn list_llms() -> HttpResponse {
     HttpResponse::Ok().json(LlmModelsResponse { models })
 }
 
-/// Send a message to the configured LLM provider.
-#[utoipa::path(
-    post,
-    path = "/chat",
-    request_body = ChatRequest,
-    responses(
-        (status = 200, description = "Chat completion", body = ChatResponse),
-        (status = 400, description = "Validation error", body = ErrorResponse),
-        (status = 502, description = "LLM provider error", body = ErrorResponse),
-    ),
-    tag = "chat"
-)]
-#[post("/chat")]
-pub async fn chat(
-    llm: web::Data<LlmClient>,
-    body: web::Json<ChatRequest>,
-) -> Result<HttpResponse, AppError> {
-    body.validate()
-        .map_err(|e| AppError::BadRequest(e.to_string()))?;
-
-    let result = llm
-        .chat(&body.message, &body.model, &body.provider, body.max_tokens)
-        .await
-        .map_err(|e| AppError::LlmError(e.to_string()))?;
-
-    Ok(HttpResponse::Ok().json(ChatResponse {
-        model: result.model,
-        message: result.content,
-        usage: result.usage.map(Usage::from),
-    }))
-}
-
-/// Stream a chat completion via Server-Sent Events.
-#[utoipa::path(
-    post,
-    path = "/chat/stream",
-    request_body = ChatRequest,
-    responses(
-        (status = 200, description = "SSE stream of chat tokens", content_type = "text/event-stream"),
-        (status = 400, description = "Validation error", body = ErrorResponse),
-        (status = 502, description = "LLM provider error", body = ErrorResponse),
-    ),
-    tag = "chat"
-)]
-#[post("/chat/stream")]
-pub async fn chat_stream(
-    llm: web::Data<LlmClient>,
-    body: web::Json<ChatRequest>,
-) -> Result<HttpResponse, AppError> {
-    body.validate()
-        .map_err(|e| AppError::BadRequest(e.to_string()))?;
-
-    let upstream = llm
-        .chat_stream(&body.message, &body.model, &body.provider)
-        .await
-        .map_err(|e| AppError::LlmError(e.to_string()))?;
-
-    Ok(sse_response(upstream))
-}
-
-// ── RAG endpoints ──────────────────────────────────────────────────
-
 /// Ask a question grounded in documents from a Milvus collection.
 #[utoipa::path(
     post,
@@ -261,7 +199,7 @@ pub async fn chat_stream(
         (status = 400, description = "Validation error", body = ErrorResponse),
         (status = 502, description = "Upstream service error", body = ErrorResponse),
     ),
-    tag = "chat"
+    tag = "Chat"
 )]
 #[post("/chat-rag")]
 pub async fn chat_rag(
@@ -317,7 +255,7 @@ pub async fn chat_rag(
         (status = 400, description = "Validation error", body = ErrorResponse),
         (status = 502, description = "Upstream service error", body = ErrorResponse),
     ),
-    tag = "chat"
+    tag = "Chat"
 )]
 #[post("/chat-rag/stream")]
 pub async fn chat_rag_stream(
@@ -359,13 +297,6 @@ pub async fn chat_rag_stream(
 }
 
 // ── SSE helpers ────────────────────────────────────────────────────
-
-fn sse_response(upstream: reqwest::Response) -> HttpResponse {
-    let byte_stream = upstream.bytes_stream().map(|chunk| {
-        chunk.map_err(|e| actix_web::error::ErrorBadGateway(format!("Stream error: {e}")))
-    });
-    sse_response_from_stream(byte_stream)
-}
 
 fn sse_response_from_stream<S>(stream: S) -> HttpResponse
 where

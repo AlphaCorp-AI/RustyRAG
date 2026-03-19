@@ -39,7 +39,7 @@ const CONCURRENT_FILES: usize = 8;
         (status = 400, description = "Bad request"),
         (status = 502, description = "Upstream service error"),
     ),
-    tag = "documents"
+    tag = "Documents"
 )]
 #[post("/documents/upload")]
 pub async fn upload_document(
@@ -429,7 +429,7 @@ async fn generate_context_prefixes(
         (status = 400, description = "Bad request"),
         (status = 502, description = "Upstream service error"),
     ),
-    tag = "documents"
+    tag = "Documents"
 )]
 #[post("/documents/search")]
 pub async fn search_documents(

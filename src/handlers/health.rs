@@ -9,7 +9,7 @@ use crate::schemas::responses::HealthResponse;
     responses(
         (status = 200, description = "Service is healthy", body = HealthResponse),
     ),
-    tag = "health"
+    tag = "Health"
 )]
 #[get("/health")]
 pub async fn health() -> HttpResponse {

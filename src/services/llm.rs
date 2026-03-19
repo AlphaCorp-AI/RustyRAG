@@ -198,19 +198,6 @@ impl LlmClient {
         self.send_chat(&messages, model, provider, max_tokens).await
     }
 
-    pub async fn chat_stream(
-        &self,
-        message: &str,
-        model: &str,
-        provider: &str,
-    ) -> anyhow::Result<reqwest::Response> {
-        let messages = vec![Message {
-            role: "user".into(),
-            content: message.into(),
-        }];
-        self.send_stream(&messages, model, provider).await
-    }
-
     pub async fn chat_stream_with_system(
         &self,
         system_prompt: &str,

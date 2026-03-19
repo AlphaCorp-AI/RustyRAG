@@ -8,6 +8,7 @@ mod services;
 
 use actix_web::{web, App, HttpServer};
 use tracing_actix_web::TracingLogger;
+use utoipa::openapi::info::{Contact, Info};
 use utoipa::openapi::tag::Tag;
 use utoipa_actix_web::{scope, AppExt};
 use utoipa_swagger_ui::SwaggerUi;
@@ -123,16 +124,32 @@ async fn main() -> std::io::Result<()> {
             })
             .service(scope::scope("/api/v1").configure(routes::configure))
             .openapi_service(|mut api| {
-                // Tag order & descriptions (Swagger UI renders them in this order)
+                api.info = Info::builder()
+                    .title("RustyRAG API")
+                    .version("0.3.0")
+                    .description(Some(
+                        "Production-grade RAG in a single Rust binary. \
+                         Hybrid search (dense + BM25), cross-encoder reranking, \
+                         Docling document extraction, and vision model support."
+                    ))
+                    .contact(Some(
+                        Contact::builder()
+                            .name(Some("Ignas Vaitukaitis"))
+                            .email(Some("ignas@alphacorp.ai"))
+                            .url(Some("https://github.com/AlphaCorp-AI/RustyRAG"))
+                            .build(),
+                    ))
+                    .build();
+
                 let tag = |name: &str, desc: &str| {
                     let mut t = Tag::new(name);
                     t.description = Some(desc.into());
                     t
                 };
                 api.tags = Some(vec![
-                    tag("chat", "LLM chat completions"),
-                    tag("documents", "Document upload, embedding & semantic search"),
-                    tag("health", "Health & readiness checks"),
+                    tag("Chat", "RAG chat completions with hybrid search and cross-encoder reranking"),
+                    tag("Documents", "Document upload (PDF, DOCX, PPTX, XLSX, HTML, TXT), embedding & semantic search"),
+                    tag("Health", "Health & readiness checks"),
                 ]);
 
                 SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-docs/openapi.json", api)

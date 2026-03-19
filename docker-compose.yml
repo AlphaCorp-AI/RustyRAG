@@ -80,7 +80,7 @@ services:
       start_period: 120s
 
   docling:
-    image: quay.io/docling-project/docling-serve-cu128:1.14.3
+    image: quay.io/docling-project/docling-serve-cu128:v1.14.3
     container_name: rustyrag_docling
     restart: unless-stopped
     environment:

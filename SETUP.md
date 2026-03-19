@@ -43,8 +43,8 @@ docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi
 ## 2. Clone and configure
 
 ```bash
-git clone https://github.com/AlphaCorp-AI/alpharust.git
-cd alpharust
+git clone https://github.com/AlphaCorp-AI/RustyRAG.git
+cd RustyRAG
 cp .env.example .env
 ```
 

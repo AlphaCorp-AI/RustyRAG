@@ -50,9 +50,7 @@ services:
     command:
       [
         "--model-id",
-        "jinaai/jina-reranker-v3",
-        "--pooling",
-        "raw",
+        "Alibaba-NLP/gte-reranker-modernbert-base",
         "--port",
         "80",
         "--auto-truncate",

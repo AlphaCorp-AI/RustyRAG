@@ -1,12 +1,13 @@
 use actix_web::{get, post, web, HttpResponse};
 use futures_util::StreamExt;
+use std::time::Instant;
 use validator::Validate;
 
 use crate::config::Config;
 use crate::errors::AppError;
 use crate::prompts::build_rag_system_prompt;
 use crate::schemas::requests::ChatRagRequest;
-use crate::schemas::responses::{ChatRagResponse, ErrorResponse, RagSource, Usage};
+use crate::schemas::responses::{ChatRagResponse, ErrorResponse, RagSource, Timing, Usage};
 use crate::schemas::responses::{LlmModelEntry, LlmModelsResponse};
 use crate::services::embeddings::{EmbeddingClient, InputType};
 use crate::services::llm::LlmClient;
@@ -210,22 +211,30 @@ pub async fn chat_rag(
     reranker: web::Data<RerankerClient>,
     config: web::Data<Config>,
 ) -> Result<HttpResponse, AppError> {
+    let request_start = Instant::now();
+
     body.validate()
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
 
     let ctx = match build_rag_context(&body, &embeddings, &milvus, &reranker, &config).await? {
         Some(ctx) => ctx,
         None => {
+            let total_ms = request_start.elapsed().as_millis() as u64;
             let collection = body.collection_name.as_deref().unwrap_or(DEFAULT_COLLECTION);
             return Ok(HttpResponse::Ok().json(ChatRagResponse {
                 model: body.model.clone(),
                 message: format!("No documents found in collection '{collection}'."),
                 sources: vec![],
                 usage: None,
+                timing: Timing {
+                    ttft_ms: total_ms,
+                    total_ms,
+                },
             }));
         }
     };
 
+    let llm_start = Instant::now();
     let result = llm
         .chat_with_system(
             &ctx.system_prompt,
@@ -236,12 +245,15 @@ pub async fn chat_rag(
         )
         .await
         .map_err(|e| AppError::LlmError(e.to_string()))?;
+    let ttft_ms = llm_start.elapsed().as_millis() as u64;
+    let total_ms = request_start.elapsed().as_millis() as u64;
 
     Ok(HttpResponse::Ok().json(ChatRagResponse {
         model: result.model,
         message: result.content,
         sources: ctx.sources,
         usage: result.usage.map(Usage::from),
+        timing: Timing { ttft_ms, total_ms },
     }))
 }
 
@@ -266,6 +278,8 @@ pub async fn chat_rag_stream(
     reranker: web::Data<RerankerClient>,
     config: web::Data<Config>,
 ) -> Result<HttpResponse, AppError> {
+    let request_start = Instant::now();
+
     body.validate()
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
 
@@ -289,11 +303,32 @@ pub async fn chat_rag_stream(
         Ok::<_, actix_web::error::Error>(actix_web::web::Bytes::from(sources_event))
     });
 
-    let llm_stream = upstream.bytes_stream().map(|chunk| {
-        chunk.map_err(|e| actix_web::error::ErrorBadGateway(format!("Stream error: {e}")))
-    });
+    // Wrap the LLM stream to track TTFT (first chunk) and emit timing at the end
+    let llm_byte_stream = upstream.bytes_stream();
+    let timed_stream = async_stream::stream! {
+        let mut ttft_ms: Option<u64> = None;
+        futures_util::pin_mut!(llm_byte_stream);
+        while let Some(chunk) = llm_byte_stream.next().await {
+            if ttft_ms.is_none() {
+                ttft_ms = Some(request_start.elapsed().as_millis() as u64);
+            }
+            match chunk {
+                Ok(bytes) => yield Ok::<_, actix_web::error::Error>(actix_web::web::Bytes::from(bytes.to_vec())),
+                Err(e) => {
+                    yield Err(actix_web::error::ErrorBadGateway(format!("Stream error: {e}")));
+                    return;
+                }
+            }
+        }
+        let total_ms = request_start.elapsed().as_millis() as u64;
+        let ttft = ttft_ms.unwrap_or(total_ms);
+        let timing_event = format!(
+            "event: timing\ndata: {{\"ttft_ms\":{ttft},\"total_ms\":{total_ms}}}\n\n"
+        );
+        yield Ok(actix_web::web::Bytes::from(timing_event));
+    };
 
-    Ok(sse_response_from_stream(sources_stream.chain(llm_stream)))
+    Ok(sse_response_from_stream(sources_stream.chain(timed_stream)))
 }
 
 // ── SSE helpers ────────────────────────────────────────────────────

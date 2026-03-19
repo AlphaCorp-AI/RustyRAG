@@ -85,6 +85,16 @@ pub struct ChatRagResponse {
     pub message: String,
     pub sources: Vec<RagSource>,
     pub usage: Option<Usage>,
+    pub timing: Timing,
+}
+
+/// Latency metrics for the RAG response.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct Timing {
+    /// Time to first LLM token in milliseconds.
+    pub ttft_ms: u64,
+    /// Total request duration in milliseconds.
+    pub total_ms: u64,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

@@ -1,23 +1,23 @@
 services:
   embeddings:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.2
+    image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9
     container_name: rustyrag_embeddings
     restart: unless-stopped
     command:
       [
         "--model-id",
-        "jinaai/jina-embeddings-v5-text-nano-retrieval",
+        "jinaai/jina-embeddings-v5-text-small-retrieval",
         "--pooling",
         "last-token",
         "--tokenization-workers",
-        "12",
+        "16",
         "--port",
         "80",
         "--auto-truncate",
         "--max-client-batch-size",
-        "64",
+        "128",
         "--max-batch-tokens",
-        "65536",
+        "131072",
       ]
     environment:
       HF_HOME: /data
@@ -28,10 +28,14 @@ services:
     deploy:
       resources:
         limits:
-          memory: 20G
-          cpus: "12"
+          memory: 12G
+          cpus: "8"
         reservations:
           memory: 4G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:80/health"]
       interval: 20s
@@ -40,13 +44,13 @@ services:
       start_period: 120s
 
   reranker:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.2
+    image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9
     container_name: rustyrag_reranker
     restart: unless-stopped
     command:
       [
         "--model-id",
-        "jinaai/jina-reranker-v2-base-multilingual",
+        "jinaai/jina-reranker-v3",
         "--port",
         "80",
         "--auto-truncate",
@@ -61,9 +65,13 @@ services:
       resources:
         limits:
           memory: 8G
-          cpus: "4"
+          cpus: "6"
         reservations:
           memory: 2G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:80/health"]
       interval: 20s
@@ -72,7 +80,7 @@ services:
       start_period: 120s
 
   docling:
-    image: quay.io/docling-project/docling-serve-cpu:latest
+    image: quay.io/docling-project/docling-serve-cu128:1.14.3
     container_name: rustyrag_docling
     restart: unless-stopped
     environment:
@@ -84,10 +92,14 @@ services:
     deploy:
       resources:
         limits:
-          memory: 8G
-          cpus: "4"
+          memory: 12G
+          cpus: "8"
         reservations:
-          memory: 2G
+          memory: 4G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
       interval: 30s
@@ -96,7 +108,7 @@ services:
       start_period: 180s
 
   milvus-db:
-    image: milvusdb/milvus:v2.5.4
+    image: milvusdb/milvus:v2.5.27
     container_name: rustyrag_milvus
     command: ["milvus", "run", "standalone"]
     security_opt:
@@ -114,10 +126,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 8G
-          cpus: "4"
+          memory: 16G
+          cpus: "8"
         reservations:
-          memory: 2G
+          memory: 4G
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
       interval: 30s

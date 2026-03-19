@@ -23,7 +23,7 @@ use crate::services::milvus::{DocumentChunk, MilvusClient, SearchOptions, DEFAUL
 use super::chat::validate_collection_name;
 
 const INSERT_BATCH_SIZE: usize = 50;
-const CONCURRENT_FILES: usize = 8;
+const CONCURRENT_FILES: usize = 2;
 
 // ── Upload endpoint ────────────────────────────────────────────────
 
@@ -134,7 +134,7 @@ pub async fn upload_document(
                             drop(tmp_file);
 
                             if pages.iter().all(|p| p.text.trim().is_empty()) {
-                                tracing::debug!("{name}: empty text, skipping");
+                                tracing::warn!("{name}: empty text after extraction, skipping");
                                 return Ok(0);
                             }
 
@@ -148,22 +148,29 @@ pub async fn upload_document(
                     .collect()
                     .await;
 
-                let mut skipped = 0usize;
+                let mut skipped_errors = 0usize;
+                let mut skipped_empty = 0usize;
                 for res in results {
                     match res {
                         Ok(n) if n > 0 => {
                             total_chunks += n;
                             total_files += 1;
                         }
-                        Ok(_) => {}
+                        Ok(_) => {
+                            skipped_empty += 1;
+                        }
                         Err(e) => {
                             tracing::warn!("Skipping file: {e}");
-                            skipped += 1;
+                            skipped_errors += 1;
                         }
                     }
                 }
-                if skipped > 0 {
-                    tracing::warn!("ZIP '{filename}': {skipped}/{entries_count} files skipped");
+                let skipped_total = skipped_errors + skipped_empty;
+                if skipped_total > 0 {
+                    tracing::warn!(
+                        "ZIP '{filename}': {skipped_total}/{entries_count} files skipped \
+                         ({skipped_errors} errors, {skipped_empty} empty)"
+                    );
                 }
             }
 

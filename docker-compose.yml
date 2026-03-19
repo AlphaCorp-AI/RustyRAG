@@ -87,6 +87,9 @@ services:
       DOCLING_SERVE_ENABLE_UI: "true"
       DOCLING_SERVE_HOST: "0.0.0.0"
       DOCLING_SERVE_PORT: "5001"
+      DOCLING_SERVE_MAX_SYNC_WAIT: "600"
+      DOCLING_SERVE_ENG_LOC_NUM_WORKERS: "2"
+      DOCLING_SERVE_ENG_LOC_SHARE_MODELS: "True"
     ports:
       - "5001:5001"
     deploy:

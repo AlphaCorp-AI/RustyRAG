@@ -2,6 +2,7 @@ use actix_web::{get, post, web, HttpResponse};
 use futures_util::StreamExt;
 use validator::Validate;
 
+use crate::config::Config;
 use crate::errors::AppError;
 use crate::prompts::build_rag_system_prompt;
 use crate::schemas::requests::{ChatRagRequest, ChatRequest};
@@ -9,7 +10,164 @@ use crate::schemas::responses::{ChatRagResponse, ChatResponse, ErrorResponse, Ra
 use crate::schemas::responses::{LlmModelEntry, LlmModelsResponse};
 use crate::services::embeddings::{EmbeddingClient, InputType};
 use crate::services::llm::LlmClient;
-use crate::services::milvus::{MilvusClient, SearchOptions, DEFAULT_COLLECTION};
+use crate::services::milvus::{MilvusClient, SearchOptions, SearchResult, DEFAULT_COLLECTION};
+use crate::services::reranker::RerankerClient;
+
+// ── Validation helpers ─────────────────────────────────────────────
+
+pub(crate) fn validate_collection_name(name: &str) -> Result<(), AppError> {
+    if name.is_empty()
+        || name.len() > 128
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(AppError::BadRequest(
+            "Invalid collection name: use only alphanumeric, underscore, or hyphen (max 128 chars)"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validated_top_n(limit: Option<i64>, default: usize) -> Result<usize, AppError> {
+    match limit {
+        Some(n) if n >= 1 => Ok(n as usize),
+        Some(_) => Err(AppError::BadRequest(
+            "limit must be a positive integer".into(),
+        )),
+        None => Ok(default),
+    }
+}
+
+// ── Shared RAG pipeline ────────────────────────────────────────────
+
+/// Holds the result of the retrieval + reranking pipeline, ready for
+/// the LLM call.
+struct RagContext {
+    sources: Vec<RagSource>,
+    system_prompt: String,
+}
+
+/// Embed the query → hybrid search Milvus → rerank → build LLM context.
+///
+/// Returns `Ok(None)` when the collection has no matching documents.
+async fn build_rag_context(
+    body: &ChatRagRequest,
+    embeddings: &EmbeddingClient,
+    milvus: &MilvusClient,
+    reranker: &RerankerClient,
+    config: &Config,
+) -> Result<Option<RagContext>, AppError> {
+    let collection = body
+        .collection_name
+        .as_deref()
+        .unwrap_or(DEFAULT_COLLECTION);
+    validate_collection_name(collection)?;
+
+    let top_n = validated_top_n(body.limit, config.rerank_top_n)?;
+
+    // 1. Embed
+    let query_embedding = embed_query(embeddings, &body.message, body.embedding_type.as_deref())
+        .await?;
+
+    // 2. Hybrid search (dense + BM25)
+    let hits = milvus
+        .hybrid_search(
+            collection,
+            query_embedding,
+            &body.message,
+            config.retrieval_limit,
+            Some(SearchOptions {
+                ef: body.milvus_search_ef,
+            }),
+        )
+        .await
+        .map_err(|e| AppError::MilvusError(e.to_string()))?;
+
+    if hits.is_empty() {
+        return Ok(None);
+    }
+
+    // 3. Rerank
+    let hits = rerank_hits(reranker, &body.message, hits, top_n).await?;
+
+    // 4. Build context
+    let sources: Vec<RagSource> = hits.iter().map(RagSource::from).collect();
+
+    let context = hits
+        .iter()
+        .enumerate()
+        .map(|(i, h)| format!("[Source {} — {}]\n{}", i + 1, h.file_name, h.text))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    Ok(Some(RagContext {
+        sources,
+        system_prompt: build_rag_system_prompt(&context),
+    }))
+}
+
+/// Embed a single query string, returning its vector.
+async fn embed_query(
+    embeddings: &EmbeddingClient,
+    message: &str,
+    embedding_type: Option<&str>,
+) -> Result<Vec<f32>, AppError> {
+    if !embeddings.is_configured() {
+        return Err(AppError::BadRequest(
+            "Embedding API is not configured. Set EMBEDDING_API_URL and EMBEDDING_MODEL.".into(),
+        ));
+    }
+
+    embeddings
+        .embed_with_options(
+            &[message.to_string()],
+            InputType::SearchQuery,
+            embedding_type,
+            None,
+        )
+        .await
+        .map_err(|e| AppError::EmbeddingError(e.to_string()))?
+        .into_iter()
+        .next()
+        .ok_or_else(|| AppError::EmbeddingError("No embedding returned for query".into()))
+}
+
+/// If the reranker is configured, rerank `hits` by relevance to `query` and
+/// return the top `top_n` results with reranker scores. Falls back to
+/// truncating the original Milvus results when the reranker is unavailable.
+async fn rerank_hits(
+    reranker: &RerankerClient,
+    query: &str,
+    hits: Vec<SearchResult>,
+    top_n: usize,
+) -> Result<Vec<SearchResult>, AppError> {
+    if !reranker.is_configured() {
+        let mut truncated = hits;
+        truncated.truncate(top_n);
+        return Ok(truncated);
+    }
+
+    let texts: Vec<String> = hits.iter().map(|h| h.text.clone()).collect();
+
+    let ranked = reranker
+        .rerank(query, &texts, top_n)
+        .await
+        .map_err(|e| AppError::LlmError(format!("Reranker error: {e}")))?;
+
+    Ok(ranked
+        .into_iter()
+        .filter_map(|r| {
+            hits.get(r.index).map(|h| SearchResult {
+                score: r.score,
+                ..h.clone()
+            })
+        })
+        .collect())
+}
+
+// ── Plain endpoints ────────────────────────────────────────────────
 
 #[utoipa::path(
     get,
@@ -56,24 +214,14 @@ pub async fn chat(
         .await
         .map_err(|e| AppError::LlmError(e.to_string()))?;
 
-    let usage = result.usage.map(|u| Usage {
-        prompt_tokens: u.prompt_tokens,
-        completion_tokens: u.completion_tokens,
-        total_tokens: u.total_tokens,
-    });
-
     Ok(HttpResponse::Ok().json(ChatResponse {
         model: result.model,
         message: result.content,
-        usage,
+        usage: result.usage.map(Usage::from),
     }))
 }
 
-// ── Streaming endpoint ──────────────────────────────────────────────
-
 /// Stream a chat completion via Server-Sent Events.
-///
-/// Proxies the upstream SSE stream directly to the client.
 #[utoipa::path(
     post,
     path = "/chat/stream",
@@ -98,26 +246,12 @@ pub async fn chat_stream(
         .await
         .map_err(|e| AppError::LlmError(e.to_string()))?;
 
-    // Forward the upstream SSE byte stream to the client
-    let byte_stream = upstream.bytes_stream().map(|chunk| {
-        chunk.map_err(|e| actix_web::error::ErrorBadGateway(format!("Stream error: {e}")))
-    });
-
-    Ok(HttpResponse::Ok()
-        .content_type("text/event-stream")
-        .insert_header(("Cache-Control", "no-cache"))
-        .insert_header(("X-Accel-Buffering", "no"))
-        .streaming(byte_stream))
+    Ok(sse_response(upstream))
 }
 
-// ── RAG endpoint ────────────────────────────────────────────────────
+// ── RAG endpoints ──────────────────────────────────────────────────
 
 /// Ask a question grounded in documents from a Milvus collection.
-///
-/// 1. Embeds the question
-/// 2. Retrieves the most similar chunks from Milvus
-/// 3. Sends them as context to the LLM
-/// 4. Returns the answer together with the source chunks
 #[utoipa::path(
     post,
     path = "/chat-rag",
@@ -135,84 +269,28 @@ pub async fn chat_rag(
     llm: web::Data<LlmClient>,
     milvus: web::Data<MilvusClient>,
     embeddings: web::Data<EmbeddingClient>,
+    reranker: web::Data<RerankerClient>,
+    config: web::Data<Config>,
 ) -> Result<HttpResponse, AppError> {
     body.validate()
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
 
-    if !embeddings.is_configured() {
-        return Err(AppError::BadRequest(
-            "Embedding API is not configured. \
-             Set EMBEDDING_API_URL and EMBEDDING_MODEL."
-                .into(),
-        ));
-    }
-
-    let limit = body.limit.unwrap_or(5);
-    let collection_name = body
-        .collection_name
-        .as_deref()
-        .unwrap_or(DEFAULT_COLLECTION);
-
-    // ── 1. Embed the user's question ────────────────────────────
-    let embs = embeddings
-        .embed_with_options(
-            &[body.message.clone()],
-            InputType::SearchQuery,
-            body.embedding_type.as_deref(),
-            None,
-        )
-        .await
-        .map_err(|e| AppError::EmbeddingError(e.to_string()))?;
-
-    let query_embedding = embs
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::EmbeddingError("No embedding returned for query".into()))?;
-
-    // ── 2. Retrieve similar chunks from Milvus ──────────────────
-    let hits = milvus
-        .search(
-            collection_name,
-            query_embedding,
-            limit,
-            Some(SearchOptions {
-                ef: body.milvus_search_ef,
-            }),
-        )
-        .await
-        .map_err(|e| AppError::MilvusError(e.to_string()))?;
-
-    if hits.is_empty() {
-        return Err(AppError::BadRequest(format!(
-            "No documents found in collection '{}'",
-            collection_name
-        )));
-    }
-
-    let sources: Vec<RagSource> = hits
-        .iter()
-        .map(|h| RagSource {
-            text: h.text.clone(),
-            source_file: h.source_file.clone(),
-            chunk_index: h.chunk_index,
-            page_number: h.page_number,
-            score: h.score,
-        })
-        .collect();
-
-    // ── 3. Build context and call the LLM ───────────────────────
-    let context = hits
-        .iter()
-        .enumerate()
-        .map(|(i, h)| format!("[Source {} — {}]\n{}", i + 1, h.source_file, h.text))
-        .collect::<Vec<_>>()
-        .join("\n\n");
-
-    let system_prompt = build_rag_system_prompt(&context);
+    let ctx = match build_rag_context(&body, &embeddings, &milvus, &reranker, &config).await? {
+        Some(ctx) => ctx,
+        None => {
+            let collection = body.collection_name.as_deref().unwrap_or(DEFAULT_COLLECTION);
+            return Ok(HttpResponse::Ok().json(ChatRagResponse {
+                model: body.model.clone(),
+                message: format!("No documents found in collection '{collection}'."),
+                sources: vec![],
+                usage: None,
+            }));
+        }
+    };
 
     let result = llm
         .chat_with_system(
-            &system_prompt,
+            &ctx.system_prompt,
             &body.message,
             &body.model,
             &body.provider,
@@ -221,28 +299,15 @@ pub async fn chat_rag(
         .await
         .map_err(|e| AppError::LlmError(e.to_string()))?;
 
-    let usage = result.usage.map(|u| Usage {
-        prompt_tokens: u.prompt_tokens,
-        completion_tokens: u.completion_tokens,
-        total_tokens: u.total_tokens,
-    });
-
     Ok(HttpResponse::Ok().json(ChatRagResponse {
         model: result.model,
         message: result.content,
-        sources,
-        usage,
+        sources: ctx.sources,
+        usage: result.usage.map(Usage::from),
     }))
 }
 
-// ── Streaming RAG endpoint ──────────────────────────────────────────
-
 /// Stream a RAG answer via Server-Sent Events.
-///
-/// 1. Embeds the question
-/// 2. Retrieves similar chunks from Milvus
-/// 3. Emits sources as `event: sources` SSE event
-/// 4. Streams the LLM answer tokens as standard SSE `data:` lines
 #[utoipa::path(
     post,
     path = "/chat-rag/stream",
@@ -260,89 +325,26 @@ pub async fn chat_rag_stream(
     llm: web::Data<LlmClient>,
     milvus: web::Data<MilvusClient>,
     embeddings: web::Data<EmbeddingClient>,
+    reranker: web::Data<RerankerClient>,
+    config: web::Data<Config>,
 ) -> Result<HttpResponse, AppError> {
     body.validate()
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
 
-    if !embeddings.is_configured() {
-        return Err(AppError::BadRequest(
-            "Embedding API is not configured. \
-             Set EMBEDDING_API_URL and EMBEDDING_MODEL."
-                .into(),
-        ));
-    }
+    let ctx = build_rag_context(&body, &embeddings, &milvus, &reranker, &config)
+        .await?
+        .ok_or_else(|| {
+            let collection = body.collection_name.as_deref().unwrap_or(DEFAULT_COLLECTION);
+            AppError::BadRequest(format!("No documents found in collection '{collection}'"))
+        })?;
 
-    let limit = body.limit.unwrap_or(5);
-    let collection_name = body
-        .collection_name
-        .as_deref()
-        .unwrap_or(DEFAULT_COLLECTION);
-
-    // ── 1. Embed the user's question ────────────────────────────
-    let embs = embeddings
-        .embed_with_options(
-            &[body.message.clone()],
-            InputType::SearchQuery,
-            body.embedding_type.as_deref(),
-            None,
-        )
-        .await
-        .map_err(|e| AppError::EmbeddingError(e.to_string()))?;
-
-    let query_embedding = embs
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::EmbeddingError("No embedding returned for query".into()))?;
-
-    // ── 2. Retrieve similar chunks from Milvus ──────────────────
-    let hits = milvus
-        .search(
-            collection_name,
-            query_embedding,
-            limit,
-            Some(SearchOptions {
-                ef: body.milvus_search_ef,
-            }),
-        )
-        .await
-        .map_err(|e| AppError::MilvusError(e.to_string()))?;
-
-    if hits.is_empty() {
-        return Err(AppError::BadRequest(format!(
-            "No documents found in collection '{}'",
-            collection_name
-        )));
-    }
-
-    let sources: Vec<RagSource> = hits
-        .iter()
-        .map(|h| RagSource {
-            text: h.text.clone(),
-            source_file: h.source_file.clone(),
-            chunk_index: h.chunk_index,
-            page_number: h.page_number,
-            score: h.score,
-        })
-        .collect();
-
-    // ── 3. Build context ────────────────────────────────────────
-    let context = hits
-        .iter()
-        .enumerate()
-        .map(|(i, h)| format!("[Source {} — {}]\n{}", i + 1, h.source_file, h.text))
-        .collect::<Vec<_>>()
-        .join("\n\n");
-
-    let system_prompt = build_rag_system_prompt(&context);
-
-    // ── 4. Start streaming LLM response ─────────────────────────
     let upstream = llm
-        .chat_stream_with_system(&system_prompt, &body.message, &body.model, &body.provider)
+        .chat_stream_with_system(&ctx.system_prompt, &body.message, &body.model, &body.provider)
         .await
         .map_err(|e| AppError::LlmError(e.to_string()))?;
 
-    // Build a stream that first emits the sources event, then proxies LLM SSE
-    let sources_json = serde_json::to_string(&sources).unwrap_or_default();
+    // Emit sources as a typed SSE event, then stream LLM tokens
+    let sources_json = serde_json::to_string(&ctx.sources).unwrap_or_default();
     let sources_event = format!("event: sources\ndata: {sources_json}\n\n");
 
     let sources_stream = futures_util::stream::once(async move {
@@ -353,11 +355,25 @@ pub async fn chat_rag_stream(
         chunk.map_err(|e| actix_web::error::ErrorBadGateway(format!("Stream error: {e}")))
     });
 
-    let combined = sources_stream.chain(llm_stream);
+    Ok(sse_response_from_stream(sources_stream.chain(llm_stream)))
+}
 
-    Ok(HttpResponse::Ok()
+// ── SSE helpers ────────────────────────────────────────────────────
+
+fn sse_response(upstream: reqwest::Response) -> HttpResponse {
+    let byte_stream = upstream.bytes_stream().map(|chunk| {
+        chunk.map_err(|e| actix_web::error::ErrorBadGateway(format!("Stream error: {e}")))
+    });
+    sse_response_from_stream(byte_stream)
+}
+
+fn sse_response_from_stream<S>(stream: S) -> HttpResponse
+where
+    S: futures_util::Stream<Item = Result<actix_web::web::Bytes, actix_web::error::Error>> + 'static,
+{
+    HttpResponse::Ok()
         .content_type("text/event-stream")
         .insert_header(("Cache-Control", "no-cache"))
         .insert_header(("X-Accel-Buffering", "no"))
-        .streaming(combined))
+        .streaming(stream)
 }

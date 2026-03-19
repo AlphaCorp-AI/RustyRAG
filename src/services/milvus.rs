@@ -5,7 +5,17 @@ use serde_json::json;
 
 pub const DEFAULT_COLLECTION: &str = "documents";
 
-// ── Milvus REST API v2 client ──────────────────────────────────────
+const OUTPUT_FIELDS: &[&str] = &[
+    "id",
+    "text",
+    "file_name",
+    "file_size",
+    "chunk_index",
+    "page_number",
+    "context_prefix",
+];
+
+// ── Public types ────────────────────────────────────────────────────
 
 #[derive(Clone)]
 pub struct MilvusClient {
@@ -19,22 +29,25 @@ pub struct MilvusClient {
     default_search_ef: i64,
 }
 
-/// A single document chunk ready to be inserted into Milvus.
+/// A document chunk ready for insertion.
 #[derive(Debug, Clone, Serialize)]
 pub struct DocumentChunk {
     pub text: String,
-    pub source_file: String,
+    pub file_name: String,
+    pub file_size: i64,
     pub chunk_index: i64,
     pub page_number: i64,
     pub context_prefix: String,
     pub embedding: Vec<f32>,
 }
 
-/// A single search hit returned by Milvus.
+/// A search hit from Milvus.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
+    pub id: i64,
     pub text: String,
-    pub source_file: String,
+    pub file_name: String,
+    pub file_size: i64,
     pub chunk_index: i64,
     pub page_number: i64,
     pub context_prefix: String,
@@ -46,7 +59,7 @@ pub struct SearchOptions {
     pub ef: Option<i64>,
 }
 
-// ── Milvus REST API response envelope ──────────────────────────────
+// ── Milvus response envelope ────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 struct MilvusResponse {
@@ -84,71 +97,49 @@ impl MilvusClient {
         }
     }
 
-    // ── Collection management ──────────────────────────────────────
+    // ── Collection management ───────────────────────────────────────
 
-    /// Ensure a collection exists (create if missing).
-    pub async fn ensure_collection(&self, collection_name: &str) -> anyhow::Result<()> {
-        if !self.has_collection(collection_name).await? {
-            self.create_collection(collection_name).await?;
-            tracing::info!("Created Milvus collection '{collection_name}'");
+    pub async fn ensure_collection(&self, name: &str) -> anyhow::Result<()> {
+        if !self.has_collection(name).await? {
+            self.create_collection(name).await?;
+            tracing::info!("Created Milvus collection '{name}'");
         }
         Ok(())
     }
 
     async fn has_collection(&self, name: &str) -> anyhow::Result<bool> {
-        let url = format!("{}/v2/vectordb/collections/has", self.base_url);
-        let body = json!({ "collectionName": name });
-
-        let resp: MilvusResponse = self
-            .http
-            .post(&url)
-            .json(&body)
-            .send()
+        let resp = self
+            .post("collections/has", json!({ "collectionName": name }))
             .await
-            .context("Milvus: failed to check collection")?
-            .json()
-            .await
-            .context("Milvus: bad response from has_collection")?;
-
-        if resp.code != 0 {
-            anyhow::bail!("Milvus has_collection error: {}", resp.message);
-        }
-
+            .context("Milvus: failed to check collection")?;
         Ok(resp.data["has"].as_bool().unwrap_or(false))
     }
 
     async fn create_collection(&self, name: &str) -> anyhow::Result<()> {
-        let url = format!("{}/v2/vectordb/collections/create", self.base_url);
-
         let body = json!({
             "collectionName": name,
             "schema": {
                 "autoId": true,
                 "enableDynamicField": false,
                 "fields": [
-                    {
-                        "fieldName": "id",
-                        "dataType": "Int64",
-                        "isPrimary": true
-                    },
+                    { "fieldName": "id", "dataType": "Int64", "isPrimary": true },
                     {
                         "fieldName": "text",
                         "dataType": "VarChar",
-                        "elementTypeParams": { "max_length": "65535" }
+                        "elementTypeParams": {
+                            "max_length": "65535",
+                            "enable_analyzer": "true",
+                            "analyzer_params": "{\"type\":\"standard\"}"
+                        }
                     },
                     {
-                        "fieldName": "source_file",
+                        "fieldName": "file_name",
                         "dataType": "VarChar",
                         "elementTypeParams": { "max_length": "1024" }
                     },
-                    {
-                        "fieldName": "chunk_index",
-                        "dataType": "Int64"
-                    },
-                    {
-                        "fieldName": "page_number",
-                        "dataType": "Int64"
-                    },
+                    { "fieldName": "file_size", "dataType": "Int64" },
+                    { "fieldName": "chunk_index", "dataType": "Int64" },
+                    { "fieldName": "page_number", "dataType": "Int64" },
                     {
                         "fieldName": "context_prefix",
                         "dataType": "VarChar",
@@ -158,8 +149,15 @@ impl MilvusClient {
                         "fieldName": "embedding",
                         "dataType": "FloatVector",
                         "elementTypeParams": { "dim": self.dimension.to_string() }
-                    }
-                ]
+                    },
+                    { "fieldName": "sparse_embedding", "dataType": "SparseFloatVector" }
+                ],
+                "functions": [{
+                    "name": "bm25_fn",
+                    "type": "BM25",
+                    "inputFieldNames": ["text"],
+                    "outputFieldNames": ["sparse_embedding"]
+                }]
             },
             "indexParams": [
                 {
@@ -171,43 +169,38 @@ impl MilvusClient {
                         "M": self.hnsw_m,
                         "efConstruction": self.hnsw_ef_construction
                     }
+                },
+                {
+                    "fieldName": "sparse_embedding",
+                    "indexName": "sparse_idx",
+                    "metricType": "BM25",
+                    "params": { "index_type": "AUTOINDEX" }
                 }
             ]
         });
 
-        let resp: MilvusResponse = self
-            .http
-            .post(&url)
-            .json(&body)
-            .send()
+        self.post("collections/create", body)
             .await
-            .context("Milvus: failed to create collection")?
-            .json()
-            .await
-            .context("Milvus: bad response from create_collection")?;
-
-        if resp.code != 0 {
-            anyhow::bail!("Milvus create_collection error: {}", resp.message);
-        }
-
+            .context("Milvus: failed to create collection")?;
         Ok(())
     }
 
-    // ── Insert ─────────────────────────────────────────────────────
+    // ── Insert ──────────────────────────────────────────────────────
 
     pub async fn insert(
         &self,
         collection_name: &str,
         chunks: Vec<DocumentChunk>,
     ) -> anyhow::Result<usize> {
-        let url = format!("{}/v2/vectordb/entities/insert", self.base_url);
+        let count = chunks.len();
 
         let data: Vec<serde_json::Value> = chunks
-            .iter()
+            .into_iter()
             .map(|c| {
                 json!({
                     "text": c.text,
-                    "source_file": c.source_file,
+                    "file_name": c.file_name,
+                    "file_size": c.file_size,
                     "chunk_index": c.chunk_index,
                     "page_number": c.page_number,
                     "context_prefix": c.context_prefix,
@@ -216,32 +209,17 @@ impl MilvusClient {
             })
             .collect();
 
-        let count = data.len();
-
-        let body = json!({
-            "collectionName": collection_name,
-            "data": data,
-        });
-
-        let resp: MilvusResponse = self
-            .http
-            .post(&url)
-            .json(&body)
-            .send()
-            .await
-            .context("Milvus: failed to insert")?
-            .json()
-            .await
-            .context("Milvus: bad response from insert")?;
-
-        if resp.code != 0 {
-            anyhow::bail!("Milvus insert error: {}", resp.message);
-        }
+        self.post(
+            "entities/insert",
+            json!({ "collectionName": collection_name, "data": data }),
+        )
+        .await
+        .context("Milvus: failed to insert")?;
 
         Ok(count)
     }
 
-    // ── Search ─────────────────────────────────────────────────────
+    // ── Search (dense only) ─────────────────────────────────────────
 
     pub async fn search(
         &self,
@@ -250,51 +228,119 @@ impl MilvusClient {
         limit: i64,
         options: Option<SearchOptions>,
     ) -> anyhow::Result<Vec<SearchResult>> {
-        let url = format!("{}/v2/vectordb/entities/search", self.base_url);
         let ef = options.and_then(|v| v.ef).unwrap_or(self.default_search_ef);
 
         let body = json!({
             "collectionName": collection_name,
             "data": [embedding],
             "limit": limit,
-            "outputFields": ["text", "source_file", "chunk_index", "page_number", "context_prefix"],
-            "searchParams": {
-                "params": { "ef": ef }
-            },
+            "outputFields": OUTPUT_FIELDS,
+            "searchParams": { "params": { "ef": ef } },
         });
+
+        let resp = self
+            .post("entities/search", body)
+            .await
+            .context("Milvus: failed to search")?;
+
+        Ok(Self::parse_results(&resp.data))
+    }
+
+    // ── Hybrid search (dense + BM25 with RRF) ──────────────────────
+
+    pub async fn hybrid_search(
+        &self,
+        collection_name: &str,
+        embedding: Vec<f32>,
+        query_text: &str,
+        limit: i64,
+        options: Option<SearchOptions>,
+    ) -> anyhow::Result<Vec<SearchResult>> {
+        let ef = options.and_then(|v| v.ef).unwrap_or(self.default_search_ef);
+
+        let body = json!({
+            "collectionName": collection_name,
+            "search": [
+                {
+                    "data": [embedding],
+                    "annsField": "embedding",
+                    "limit": limit,
+                    "params": { "ef": ef }
+                },
+                {
+                    "data": [query_text],
+                    "annsField": "sparse_embedding",
+                    "limit": limit
+                }
+            ],
+            "rerank": { "strategy": "rrf", "params": { "k": 60 } },
+            "limit": limit,
+            "outputFields": OUTPUT_FIELDS,
+        });
+
+        let resp_result = self
+            .http
+            .post(format!("{}/v2/vectordb/entities/hybrid_search", self.base_url))
+            .json(&body)
+            .send()
+            .await
+            .context("Milvus: failed to hybrid_search")?
+            .json::<MilvusResponse>()
+            .await
+            .context("Milvus: bad response from hybrid_search")?;
+
+        if resp_result.code != 0 {
+            tracing::warn!(
+                "Milvus hybrid_search failed ({}), falling back to dense search",
+                resp_result.message
+            );
+            return self.search(collection_name, embedding, limit, None).await;
+        }
+
+        Ok(Self::parse_results(&resp_result.data))
+    }
+
+    // ── Internal helpers ────────────────────────────────────────────
+
+    /// POST to Milvus REST API v2 and check for errors.
+    async fn post(&self, path: &str, body: serde_json::Value) -> anyhow::Result<MilvusResponse> {
+        let url = format!("{}/v2/vectordb/{}", self.base_url, path);
 
         let resp: MilvusResponse = self
             .http
             .post(&url)
             .json(&body)
             .send()
-            .await
-            .context("Milvus: failed to search")?
+            .await?
             .json()
-            .await
-            .context("Milvus: bad response from search")?;
+            .await?;
 
         if resp.code != 0 {
-            anyhow::bail!("Milvus search error: {}", resp.message);
+            anyhow::bail!("Milvus {path} error: {}", resp.message);
         }
 
-        let results = resp
-            .data
-            .as_array()
+        Ok(resp)
+    }
+
+    fn parse_results(data: &serde_json::Value) -> Vec<SearchResult> {
+        data.as_array()
             .map(|arr| {
                 arr.iter()
                     .map(|item| SearchResult {
+                        id: item["id"].as_i64().unwrap_or(0),
                         text: item["text"].as_str().unwrap_or("").to_string(),
-                        source_file: item["source_file"].as_str().unwrap_or("").to_string(),
+                        file_name: item["file_name"].as_str().unwrap_or("").to_string(),
+                        file_size: item["file_size"].as_i64().unwrap_or(0),
                         chunk_index: item["chunk_index"].as_i64().unwrap_or(0),
                         page_number: item["page_number"].as_i64().unwrap_or(0),
-                        context_prefix: item["context_prefix"].as_str().unwrap_or("").to_string(),
+                        context_prefix: item["context_prefix"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string(),
                         score: item["distance"].as_f64().unwrap_or(0.0) as f32,
                     })
                     .collect()
             })
-            .unwrap_or_default();
-
-        Ok(results)
+            .unwrap_or_default()
     }
 }

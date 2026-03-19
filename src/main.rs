@@ -15,26 +15,17 @@ use utoipa_swagger_ui::SwaggerUi;
 use crate::config::Config;
 use crate::services::embeddings::EmbeddingClient;
 use crate::services::llm::LlmClient;
+use crate::services::docling::DoclingClient;
 use crate::services::milvus::MilvusClient;
+use crate::services::reranker::RerankerClient;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    // Force tracing output to stderr so it survives the stdout redirect below.
+    // Tracing goes to stderr; pdf-extract's println! noise goes to stdout
+    // and is harmless (stdout is not used for application output).
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .init();
-
-    // Redirect stdout → /dev/null once at startup.
-    // pdf-extract uses println! for noisy debug output; tracing now goes to
-    // stderr, so only the pdf-extract noise is silenced.
-    {
-        use std::os::unix::io::AsRawFd;
-        if let Ok(devnull) = std::fs::File::open("/dev/null") {
-            unsafe {
-                libc::dup2(devnull.as_raw_fd(), std::io::stdout().as_raw_fd());
-            }
-        }
-    }
 
     let config = Config::from_env().expect("Failed to load config");
 
@@ -71,10 +62,41 @@ async fn main() -> std::io::Result<()> {
         );
     }
 
+    // Reranker client (optional — set RERANKER_API_URL to enable)
+    let reranker_client = RerankerClient::new(&config.reranker_api_url);
+    if reranker_client.is_configured() {
+        tracing::info!(
+            "Reranker configured → {} (retrieve {} → rerank top {})",
+            config.reranker_api_url,
+            config.retrieval_limit,
+            config.rerank_top_n,
+        );
+    } else {
+        tracing::warn!("Reranker NOT configured – set RERANKER_API_URL to enable reranking");
+    }
+
+    // Docling document extraction service
+    let docling_client = DoclingClient::new(
+        &config.docling_url,
+        &config.groq_api_key,
+        &config.vision_model,
+    );
+    if docling_client.is_configured() {
+        tracing::info!(
+            "Docling configured → {} (vision: {})",
+            config.docling_url,
+            config.vision_model,
+        );
+    } else {
+        tracing::warn!("Docling NOT configured – PDF/DOCX uploads will fail");
+    }
+
     let config_data = web::Data::new(config.clone());
     let llm_client = web::Data::new(LlmClient::new(config.clone()));
     let milvus_data = web::Data::new(milvus_client);
     let embedding_data = web::Data::new(embedding_client);
+    let reranker_data = web::Data::new(reranker_client);
+    let docling_data = web::Data::new(docling_client);
 
     let host = config.host.clone();
     let port = config.port;
@@ -86,14 +108,18 @@ async fn main() -> std::io::Result<()> {
         let app = App::new()
             .into_utoipa_app()
             .map(|app| {
+                let cors = build_cors(&config.cors_allowed_origins);
+
                 app.wrap(TracingLogger::default())
-                    .wrap(actix_cors::Cors::permissive())
-                    // Allow uploads up to 2 GB (default is 256 KB)
+                    .wrap(cors)
                     .app_data(web::PayloadConfig::new(2 * 1024 * 1024 * 1024))
+                    .app_data(web::JsonConfig::default().limit(1_048_576))
                     .app_data(config_data.clone())
                     .app_data(llm_client.clone())
                     .app_data(milvus_data.clone())
                     .app_data(embedding_data.clone())
+                    .app_data(reranker_data.clone())
+                    .app_data(docling_data.clone())
             })
             .service(scope::scope("/api/v1").configure(routes::configure))
             .openapi_service(|mut api| {
@@ -118,4 +144,29 @@ async fn main() -> std::io::Result<()> {
     .bind(format!("{host}:{port}"))?
     .run()
     .await
+}
+
+/// Build CORS middleware. Permissive when `origins` is empty (dev mode),
+/// explicit allowlist otherwise.
+fn build_cors(origins: &str) -> actix_cors::Cors {
+    if origins.is_empty() {
+        return actix_cors::Cors::permissive();
+    }
+
+    let mut cors = actix_cors::Cors::default()
+        .allowed_methods(vec!["GET", "POST", "OPTIONS"])
+        .allowed_headers(vec![
+            actix_web::http::header::CONTENT_TYPE,
+            actix_web::http::header::AUTHORIZATION,
+        ])
+        .max_age(3600);
+
+    for origin in origins.split(',') {
+        let origin = origin.trim();
+        if !origin.is_empty() {
+            cors = cors.allowed_origin(origin);
+        }
+    }
+
+    cors
 }

@@ -2,9 +2,7 @@ use anyhow::Context;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::config::Config;
-
-// ── Groq request/response shapes ────────────────────────────────────
+// ── Request/response shapes (OpenAI-compatible) ─────────────────────
 
 #[derive(Serialize)]
 struct ChatCompletionRequest {
@@ -46,20 +44,13 @@ pub struct ApiUsage {
     pub total_tokens: u32,
 }
 
-// ── Public result type ──────────────────────────────────────────────
-
 pub struct ChatResult {
     pub model: String,
     pub content: String,
     pub usage: Option<ApiUsage>,
 }
 
-// ── Client ──────────────────────────────────────────────────────────
-
-pub struct LlmClient {
-    http: Client,
-    config: Config,
-}
+// ── Provider registry ───────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Provider {
@@ -81,8 +72,54 @@ const CEREBRAS_MODELS: &[&str] = &[
     "zai-glm-4.7",
 ];
 
+impl Provider {
+    fn from_str(raw: &str) -> anyhow::Result<Self> {
+        match raw.trim().to_lowercase().as_str() {
+            "groq" => Ok(Self::Groq),
+            "cerebras" => Ok(Self::Cerebras),
+            other => anyhow::bail!("Unsupported LLM provider '{other}' (expected 'groq' or 'cerebras')"),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Groq => "groq",
+            Self::Cerebras => "cerebras",
+        }
+    }
+
+    fn url(self) -> &'static str {
+        match self {
+            Self::Groq => "https://api.groq.com/openai/v1/chat/completions",
+            Self::Cerebras => "https://api.cerebras.ai/v1/chat/completions",
+        }
+    }
+
+    fn models(self) -> &'static [&'static str] {
+        match self {
+            Self::Groq => GROQ_MODELS,
+            Self::Cerebras => CEREBRAS_MODELS,
+        }
+    }
+}
+
+// ── Client ──────────────────────────────────────────────────────────
+
+pub struct LlmClient {
+    http: Client,
+    groq_api_key: String,
+    cerebras_api_key: String,
+}
+
+/// Resolved provider + API key + validated model, ready for a request.
+struct ResolvedRequest<'a> {
+    url: &'static str,
+    api_key: &'a str,
+    model: String,
+}
+
 impl LlmClient {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: crate::config::Config) -> Self {
         Self {
             http: Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(2))
@@ -90,60 +127,37 @@ impl LlmClient {
                 .pool_max_idle_per_host(32)
                 .build()
                 .expect("Failed to build reqwest client for LLM"),
-            config,
+            groq_api_key: config.groq_api_key,
+            cerebras_api_key: config.cerebras_api_key,
         }
     }
 
-    fn provider_from_str(raw: &str) -> anyhow::Result<Provider> {
-        let provider = raw.trim().to_lowercase();
-        match provider.as_str() {
-            "groq" => Ok(Provider::Groq),
-            "cerebras" => Ok(Provider::Cerebras),
-            _ => anyhow::bail!(
-                "Unsupported LLM provider '{provider}' (expected 'groq' or 'cerebras')"
-            ),
-        }
-    }
+    /// Resolve provider, validate API key and model in one step.
+    fn resolve(&self, provider: &str, model: &str) -> anyhow::Result<ResolvedRequest<'_>> {
+        let p = Provider::from_str(provider)?;
 
-    fn provider_auth_and_url(&self, provider: Provider) -> anyhow::Result<(&str, &str)> {
-        match provider {
-            Provider::Groq => {
-                if self.config.groq_api_key.is_empty() {
-                    anyhow::bail!("GROQ_API_KEY is not configured");
-                }
-                Ok((
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    self.config.groq_api_key.as_str(),
-                ))
-            }
-            Provider::Cerebras => {
-                if self.config.cerebras_api_key.is_empty() {
-                    anyhow::bail!("CEREBRAS_API_KEY is not configured");
-                }
-                Ok((
-                    "https://api.cerebras.ai/v1/chat/completions",
-                    self.config.cerebras_api_key.as_str(),
-                ))
-            }
-        }
-    }
-
-    fn validate_model_for_provider(&self, provider: Provider, model: &str) -> anyhow::Result<()> {
-        let allowed = match provider {
-            Provider::Groq => GROQ_MODELS,
-            Provider::Cerebras => CEREBRAS_MODELS,
+        let api_key = match p {
+            Provider::Groq => &self.groq_api_key,
+            Provider::Cerebras => &self.cerebras_api_key,
         };
-        if allowed.contains(&model) {
-            return Ok(());
+        if api_key.is_empty() {
+            anyhow::bail!("{}_API_KEY is not configured", p.label().to_uppercase());
         }
-        anyhow::bail!(
-            "Model '{model}' is not supported for provider '{}'. Allowed models: {}",
-            match provider {
-                Provider::Groq => "groq",
-                Provider::Cerebras => "cerebras",
-            },
-            allowed.join(", ")
-        );
+
+        let allowed = p.models();
+        if !allowed.contains(&model) {
+            anyhow::bail!(
+                "Model '{model}' is not supported for provider '{}'. Allowed: {}",
+                p.label(),
+                allowed.join(", ")
+            );
+        }
+
+        Ok(ResolvedRequest {
+            url: p.url(),
+            api_key,
+            model: model.to_string(),
+        })
     }
 
     pub fn supported_models() -> Vec<(&'static str, &'static str)> {
@@ -153,7 +167,8 @@ impl LlmClient {
         out
     }
 
-    /// Send a chat completion request via the selected provider.
+    // ── Public API ──────────────────────────────────────────────────
+
     pub async fn chat(
         &self,
         message: &str,
@@ -161,19 +176,13 @@ impl LlmClient {
         provider: &str,
         max_tokens: Option<u32>,
     ) -> anyhow::Result<ChatResult> {
-        self.chat_with_messages(
-            &[Message {
-                role: "user".into(),
-                content: message.into(),
-            }],
-            model,
-            provider,
-            max_tokens,
-        )
-        .await
+        let messages = vec![Message {
+            role: "user".into(),
+            content: message.into(),
+        }];
+        self.send_chat(&messages, model, provider, max_tokens).await
     }
 
-    /// Chat with a system prompt (used for RAG).
     pub async fn chat_with_system(
         &self,
         system_prompt: &str,
@@ -182,43 +191,26 @@ impl LlmClient {
         provider: &str,
         max_tokens: Option<u32>,
     ) -> anyhow::Result<ChatResult> {
-        self.chat_with_messages(
-            &[
-                Message {
-                    role: "system".into(),
-                    content: system_prompt.into(),
-                },
-                Message {
-                    role: "user".into(),
-                    content: user_message.into(),
-                },
-            ],
-            model,
-            provider,
-            max_tokens,
-        )
-        .await
+        let messages = vec![
+            Message { role: "system".into(), content: system_prompt.into() },
+            Message { role: "user".into(), content: user_message.into() },
+        ];
+        self.send_chat(&messages, model, provider, max_tokens).await
     }
 
-    /// Stream a chat completion — returns the raw SSE response from provider.
     pub async fn chat_stream(
         &self,
         message: &str,
         model: &str,
         provider: &str,
     ) -> anyhow::Result<reqwest::Response> {
-        self.stream_messages(
-            &[Message {
-                role: "user".into(),
-                content: message.into(),
-            }],
-            model,
-            provider,
-        )
-        .await
+        let messages = vec![Message {
+            role: "user".into(),
+            content: message.into(),
+        }];
+        self.send_stream(&messages, model, provider).await
     }
 
-    /// Stream a chat completion with a system prompt (used for RAG streaming).
     pub async fn chat_stream_with_system(
         &self,
         system_prompt: &str,
@@ -226,75 +218,26 @@ impl LlmClient {
         model: &str,
         provider: &str,
     ) -> anyhow::Result<reqwest::Response> {
-        self.stream_messages(
-            &[
-                Message {
-                    role: "system".into(),
-                    content: system_prompt.into(),
-                },
-                Message {
-                    role: "user".into(),
-                    content: user_message.into(),
-                },
-            ],
-            model,
-            provider,
-        )
-        .await
+        let messages = vec![
+            Message { role: "system".into(), content: system_prompt.into() },
+            Message { role: "user".into(), content: user_message.into() },
+        ];
+        self.send_stream(&messages, model, provider).await
     }
 
-    /// Internal: stream arbitrary messages, returning the raw SSE response.
-    async fn stream_messages(
-        &self,
-        messages: &[Message],
-        model: &str,
-        provider: &str,
-    ) -> anyhow::Result<reqwest::Response> {
-        let resolved_provider = Self::provider_from_str(provider)?;
-        let (url, api_key) = self.provider_auth_and_url(resolved_provider)?;
-        let model_id: String = model.to_string();
-        self.validate_model_for_provider(resolved_provider, &model_id)?;
+    // ── Internal ────────────────────────────────────────────────────
 
-        let body = ChatCompletionRequest {
-            model: model_id,
-            messages: messages.to_vec(),
-            max_tokens: None,
-            stream: Some(true),
-        };
-
-        let res = self
-            .http
-            .post(url)
-            .bearer_auth(api_key)
-            .json(&body)
-            .send()
-            .await
-            .context("Failed to reach LLM provider")?;
-
-        let status = res.status();
-        if !status.is_success() {
-            let text = res.text().await.unwrap_or_default();
-            anyhow::bail!("LLM provider returned {status}: {text}");
-        }
-
-        Ok(res)
-    }
-
-    /// Internal: send arbitrary messages to the LLM.
-    async fn chat_with_messages(
+    async fn send_chat(
         &self,
         messages: &[Message],
         model: &str,
         provider: &str,
         max_tokens: Option<u32>,
     ) -> anyhow::Result<ChatResult> {
-        let resolved_provider = Self::provider_from_str(provider)?;
-        let (url, api_key) = self.provider_auth_and_url(resolved_provider)?;
-        let model_id: String = model.to_string();
-        self.validate_model_for_provider(resolved_provider, &model_id)?;
+        let r = self.resolve(provider, model)?;
 
         let body = ChatCompletionRequest {
-            model: model_id.clone(),
+            model: r.model.clone(),
             messages: messages.to_vec(),
             max_tokens,
             stream: None,
@@ -302,17 +245,16 @@ impl LlmClient {
 
         let res = self
             .http
-            .post(url)
-            .bearer_auth(api_key)
+            .post(r.url)
+            .bearer_auth(r.api_key)
             .json(&body)
             .send()
             .await
             .context("Failed to reach LLM provider")?;
 
-        let status = res.status();
-        if !status.is_success() {
+        if !res.status().is_success() {
             let text = res.text().await.unwrap_or_default();
-            anyhow::bail!("LLM provider returned {status}: {text}");
+            anyhow::bail!("LLM provider returned error: {text}");
         }
 
         let data: ChatCompletionResponse = res
@@ -327,9 +269,41 @@ impl LlmClient {
             .unwrap_or_default();
 
         Ok(ChatResult {
-            model: data.model.unwrap_or(model_id),
+            model: data.model.unwrap_or(r.model),
             content,
             usage: data.usage,
         })
+    }
+
+    async fn send_stream(
+        &self,
+        messages: &[Message],
+        model: &str,
+        provider: &str,
+    ) -> anyhow::Result<reqwest::Response> {
+        let r = self.resolve(provider, model)?;
+
+        let body = ChatCompletionRequest {
+            model: r.model,
+            messages: messages.to_vec(),
+            max_tokens: None,
+            stream: Some(true),
+        };
+
+        let res = self
+            .http
+            .post(r.url)
+            .bearer_auth(r.api_key)
+            .json(&body)
+            .send()
+            .await
+            .context("Failed to reach LLM provider")?;
+
+        if !res.status().is_success() {
+            let text = res.text().await.unwrap_or_default();
+            anyhow::bail!("LLM provider returned error: {text}");
+        }
+
+        Ok(res)
     }
 }

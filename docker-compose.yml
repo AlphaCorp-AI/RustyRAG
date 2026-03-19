@@ -39,8 +39,64 @@ services:
       retries: 10
       start_period: 120s
 
+  reranker:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.2
+    container_name: rustyrag_reranker
+    restart: unless-stopped
+    command:
+      [
+        "--model-id",
+        "jinaai/jina-reranker-v2-base-multilingual",
+        "--port",
+        "80",
+        "--auto-truncate",
+      ]
+    environment:
+      HF_HOME: /data
+    volumes:
+      - hf_cache:/data
+    ports:
+      - "7998:80"
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+          cpus: "4"
+        reservations:
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+  docling:
+    image: quay.io/docling-project/docling-serve-cpu:latest
+    container_name: rustyrag_docling
+    restart: unless-stopped
+    environment:
+      DOCLING_SERVE_ENABLE_UI: "true"
+      DOCLING_SERVE_HOST: "0.0.0.0"
+      DOCLING_SERVE_PORT: "5001"
+    ports:
+      - "5001:5001"
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+          cpus: "4"
+        reservations:
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+
   milvus-db:
-    image: milvusdb/milvus:v2.4.21
+    image: milvusdb/milvus:v2.5.4
     container_name: rustyrag_milvus
     command: ["milvus", "run", "standalone"]
     security_opt:

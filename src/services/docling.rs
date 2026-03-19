@@ -102,6 +102,9 @@ impl DoclingClient {
     }
 
     /// POST file to Docling /v1/convert/file and extract markdown.
+    ///
+    /// Retries with exponential backoff on connection errors (e.g. Docling
+    /// restarting) and 5xx responses.
     async fn call_docling_api(
         &self,
         file_bytes: Vec<u8>,
@@ -109,43 +112,71 @@ impl DoclingClient {
     ) -> anyhow::Result<String> {
         let url = format!("{}/v1/convert/file", self.base_url);
 
-        let file_part = reqwest::multipart::Part::bytes(file_bytes)
-            .file_name(filename.to_string())
-            .mime_str("application/octet-stream")
-            .context("Failed to create multipart part")?;
+        let max_retries = 8u32;
+        let mut backoff = std::time::Duration::from_secs(2);
 
-        let form = reqwest::multipart::Form::new()
-            .part("files", file_part)
-            .text("image_export_mode", "embedded")
-            .text("do_table_structure", "true");
+        for attempt in 0..=max_retries {
+            let file_part = reqwest::multipart::Part::bytes(file_bytes.clone())
+                .file_name(filename.to_string())
+                .mime_str("application/octet-stream")
+                .context("Failed to create multipart part")?;
 
-        let resp = self
-            .http
-            .post(&url)
-            .multipart(form)
-            .send()
-            .await
-            .context("Docling: failed to send request")?;
+            let form = reqwest::multipart::Form::new()
+                .part("files", file_part)
+                .text("image_export_mode", "embedded")
+                .text("do_table_structure", "true");
 
-        if !resp.status().is_success() {
+            let result = self.http.post(&url).multipart(form).send().await;
+
+            let resp = match result {
+                Ok(r) => r,
+                Err(e) if attempt < max_retries => {
+                    tracing::warn!(
+                        "Docling connection failed for '{filename}', retrying in {}s ({}/{max_retries}): {e}",
+                        backoff.as_secs(),
+                        attempt + 1,
+                    );
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(std::time::Duration::from_secs(60));
+                    continue;
+                }
+                Err(e) => return Err(e).context("Docling: failed to send request"),
+            };
+
             let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!("Docling returned {status}: {text}");
+
+            if status.is_server_error() && attempt < max_retries {
+                let text = resp.text().await.unwrap_or_default();
+                tracing::warn!(
+                    "Docling returned {status} for '{filename}', retrying in {}s ({}/{max_retries}): {text}",
+                    backoff.as_secs(),
+                    attempt + 1,
+                );
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(std::time::Duration::from_secs(60));
+                continue;
+            }
+
+            if !status.is_success() {
+                let text = resp.text().await.unwrap_or_default();
+                anyhow::bail!("Docling returned {status}: {text}");
+            }
+
+            let body: serde_json::Value = resp
+                .json()
+                .await
+                .context("Docling: failed to parse response")?;
+
+            let markdown = extract_markdown_from_response(&body)
+                .ok_or_else(|| {
+                    tracing::debug!("Docling response structure: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
+                    anyhow::anyhow!("Could not find markdown content in Docling response")
+                })?;
+
+            return Ok(markdown);
         }
 
-        let body: serde_json::Value = resp
-            .json()
-            .await
-            .context("Docling: failed to parse response")?;
-
-        // Try multiple known paths for the markdown content
-        let markdown = extract_markdown_from_response(&body)
-            .ok_or_else(|| {
-                tracing::debug!("Docling response structure: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
-                anyhow::anyhow!("Could not find markdown content in Docling response")
-            })?;
-
-        Ok(markdown)
+        anyhow::bail!("Docling still unavailable for '{filename}' after {max_retries} retries")
     }
 
     /// Find base64-embedded images in markdown and replace with text descriptions.

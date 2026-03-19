@@ -51,6 +51,8 @@ services:
       [
         "--model-id",
         "jinaai/jina-reranker-v3",
+        "--pooling",
+        "raw",
         "--port",
         "80",
         "--auto-truncate",

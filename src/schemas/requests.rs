@@ -5,30 +5,6 @@ use validator::Validate;
 // Re-export for utoipa multipart body schema
 pub use self::multipart::DocumentUploadBody;
 
-// ── Chat ────────────────────────────────────────────────────────────
-
-/// POST /api/v1/chat
-#[derive(Debug, Deserialize, Validate, ToSchema)]
-pub struct ChatRequest {
-    /// The user message to send to the LLM
-    #[validate(length(min = 1, max = 10_000))]
-    pub message: String,
-
-    /// Model to use for this request.
-    #[validate(length(min = 1))]
-    #[schema(example = "llama-3.3-70b-versatile")]
-    pub model: String,
-
-    /// Provider to use for this request ("groq" or "cerebras")
-    #[validate(length(min = 1))]
-    #[schema(example = "groq")]
-    pub provider: String,
-
-    /// Max tokens for the completion
-    #[schema(example = 2048)]
-    pub max_tokens: Option<u32>,
-}
-
 // ── Documents ──────────────────────────────────────────────────────
 
 /// Query parameters for POST /api/v1/documents/upload

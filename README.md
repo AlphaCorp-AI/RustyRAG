@@ -2,9 +2,9 @@
 
 # RustyRAG
 
-### The lowest-latency open-source RAG app
+### Production-grade RAG in a single Rust binary
 
-Sub-200ms responses on localhost. Sub-600ms to a browser across continents. No GPU required.
+Hybrid search, cross-encoder reranking, Docling document extraction, and sub-500ms answers. No GPU required for the server.
 
 <br/>
 
@@ -13,6 +13,7 @@ Sub-200ms responses on localhost. Sub-600ms to a browser across continents. No G
 <a href="https://jina.ai"><img src="https://img.shields.io/badge/Jina_AI-111827?style=for-the-badge" alt="Jina AI"/></a>
 <a href="https://milvus.io"><img src="https://img.shields.io/badge/Milvus-00A1EA?style=for-the-badge" alt="Milvus"/></a>
 <a href="https://huggingface.co"><img src="https://img.shields.io/badge/HuggingFace-FFD21E?style=for-the-badge&logo=huggingface&logoColor=black" alt="HuggingFace"/></a>
+<a href="https://ds4sd.github.io/docling/"><img src="https://img.shields.io/badge/Docling-4B0082?style=for-the-badge" alt="Docling"/></a>
 
 <br/>
 
@@ -29,108 +30,88 @@ Built by **Ignas Vaitukaitis** &nbsp; <a href="https://www.linkedin.com/in/ignas
 
 ---
 
-## Benchmarks
+## Evaluation Results
+
+LLM-as-judge evaluation on 3,045 questions from [Open RAG Bench](https://github.com/vectara/open-rag-bench) (academic papers). The judge model (`qwen-3-235b`) compares RustyRAG's answer against a ground-truth expected answer and scores it pass/fail.
 
 | Metric | Value |
 |--------|-------|
-| Localhost response time | **< 200ms** |
-| Remote response time (Azure North Central US → Rio de Janeiro) | **< 600ms** |
-| Instance | Azure F4s_v2 (no GPU) |
-| Sources per response | 3 |
-| PDFs ingested | 977 |
-| Chunks in Milvus | 56,114 |
-
-### Localhost (curl → localhost:8080)
-
-RAG streaming responses with 3 sources, Cerebras `qwen-3-235b-a22b-instruct-2507`. TTFT = time to first token.
-
-<p>
-<img src="docs/localhost_time_1.png" alt="Localhost benchmark 1 — TTFT: 159ms, Total: 199ms" width="100%"/>
-</p>
-<p>
-<img src="docs/localhost_time_2.png" alt="Localhost benchmark 2 — TTFT: 165ms, Total: 187ms" width="100%"/>
-</p>
-<p>
-<img src="docs/localhost_time_3.png" alt="Localhost benchmark 3 — TTFT: 169ms, Total: 208ms" width="100%"/>
-</p>
-
-### Browser (Azure North Central US → Rio de Janeiro)
-
-Same 977-PDF corpus, same model. Chat UI showing TTFT and total response time per query.
-
-<p>
-<img src="docs/browser_time_1.png" alt="Browser benchmark 1" width="700"/>
-</p>
-<p>
-<img src="docs/browser_time_2.png" alt="Browser benchmark 2" width="700"/>
-</p>
-<p>
-<img src="docs/browser_time_3.png" alt="Browser benchmark 3" width="700"/>
-</p>
+| **Pass rate** | **2,648 / 3,045 (87.0%)** |
+| Fail rate | 397 / 3,045 (13.0%) |
+| Avg TTFT (time to first token) | 398ms |
+| Avg total response time | 466ms |
+| Benchmark | [Open RAG Bench](https://github.com/vectara/open-rag-bench) |
+| Corpus | 977 PDFs (57,347 chunks) |
+| LLM | Cerebras `qwen-3-235b-a22b-instruct-2507` |
+| Embeddings | `jina-embeddings-v5-text-small-retrieval` (1024-dim) |
+| Reranker | `gte-reranker-modernbert-base` (149M params) |
+| Search | Hybrid (dense HNSW + BM25) with RRF fusion |
+| Retrieval | 20 candidates retrieved, top 3 after reranking |
 
 ---
 
-## What's New in v0.2
-
-⚡ **Cerebras & Groq as LLM providers** — pick any model and go
-
-⚡ **Jina AI local embeddings** — replaced Cohere with `jina-embeddings-v5-text-nano-retrieval` for the best speed-to-quality ratio
-
-⚡ **Contextual retrieval** — LLM-generated context prefixes per chunk for better accuracy (opt-in)
-
-Also:
-- Built on **Rust + Actix-Web**
-- **Milvus** vector DB with **Swagger UI**
-- **Docker Compose** — pull, add `.env`, build, run
-- Supports **PDFs** and **zipped PDF bundles**
-
----
-
-## Why RustyRAG?
-
-Most RAG stacks glue together Python microservices with high per-request overhead. RustyRAG collapses the entire pipeline -- document ingestion, semantic chunking, contextual retrieval, vector search, and LLM streaming -- into a **single async Rust binary**.
-
-### Key Features
-
-- **Full RAG pipeline in one binary** -- upload, chunk, embed, store, search, and generate
-- **Contextual retrieval** -- LLM-generated context prefixes per chunk (inspired by [Anthropic's Contextual Retrieval](https://www.anthropic.com/news/contextual-retrieval)) enrich embeddings for significantly better search accuracy
-- **Semantic chunking** -- sentence-boundary-aware splitting via `text-splitter`, with configurable overlap
-- **Per-page PDF extraction** -- page numbers preserved through the pipeline for source attribution
-- **Dual LLM providers** -- [Groq](https://groq.com) and [Cerebras](https://www.cerebras.ai/), chosen for their low-latency inference hardware (Groq LPU, Cerebras wafer-scale engine)
-- **Local embeddings** -- `jina-embeddings-v5-text-nano-retrieval` served via HuggingFace TEI, selected for its top MTEB ranking among small models (768-dim, best performance-to-cost ratio)
-- **Real-time SSE streaming** -- tokens stream to the client as they're generated, with sources delivered as a leading SSE event
-- **Milvus HNSW vector search** -- cosine similarity with tunable `ef` and `M` parameters
-- **Concurrent document ingestion** -- ZIP archives processed across parallel workers with batched embedding calls
-- **Interactive Swagger UI** -- every endpoint documented with OpenAPI 3.0
-- **Built-in chat frontend** -- a minimal SSE-powered UI at `/static/chat.html` for testing RAG and plain chat
-
----
-
-## Architecture
+## How It Works
 
 ```
-                                RustyRAG
-┌──────────┐         ┌─────────────────────────────────────────────────┐
-│          │   SSE   │                                                 │
-│  Client  │◄───────►│  Actix-web Router                              │
-│          │         │       │                                        │
-└──────────┘         │       ├── /documents/upload                    │
-                     │       │     │                                  │
-                     │       │     ├─ Extract text (PDF pages / TXT)  │
-                     │       │     ├─ Semantic chunking               │
-                     │       │     ├─ Contextual prefix generation ──►│── LLM API
-                     │       │     ├─ Embed (prefix + chunk) ────────►│── Jina TEI
-                     │       │     └─ Insert vectors ────────────────►│── Milvus
-                     │       │                                        │
-                     │       ├── /chat-rag/stream                     │
-                     │       │     ├─ Embed query ───────────────────►│── Jina TEI
-                     │       │     ├─ Vector search ─────────────────►│── Milvus
-                     │       │     └─ Stream answer ─────────────────►│── LLM API
-                     │       │                                        │
-                     │       └── /chat/stream                         │
-                     │             └─ Direct LLM streaming ──────────►│── LLM API
-                     └─────────────────────────────────────────────────┘
+                           RustyRAG — Full Pipeline
+
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │                         UPLOAD FLOW                                  │
+  │                                                                      │
+  │  File (.pdf, .docx, .pptx, .xlsx, .html, .txt, .zip)                 │
+  │    │                                                                 │
+  │    ├─ 1. Extract ──────────────────────────► Docling API             │
+  │    │      (tables as markdown, OCR,          (layout-aware, GPU)     │
+  │    │       multi-column linearization)                               │
+  │    │                                                                 │
+  │    ├─ 2. Describe images ──────────────────► Groq (Llama 4 Scout)    │
+  │    │      (embedded images → text)           (vision model, 17B)     │
+  │    │                                                                 │
+  │    ├─ 3. Chunk                                                       │
+  │    │      (sentence-boundary-aware,                                  │
+  │    │       configurable size + overlap)                              │
+  │    │                                                                 │
+  │    ├─ 4. Contextual prefix (opt-in) ───────► LLM API                 │
+  │    │      (1-2 sentence context per chunk)                           │
+  │    │                                                                 │
+  │    ├─ 5. Embed ────────────────────────────► Jina TEI                │
+  │    │      (prefix + chunk → 1024-dim vec)    (local, GPU)            │
+  │    │                                                                 │
+  │    └─ 6. Insert ───────────────────────────► Milvus                  │
+  │           (dense vectors + BM25 sparse)      (HNSW + BM25 index)     │
+  │                                                                      │
+  └──────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │                          QUERY FLOW                                  │
+  │                                                                      │
+  │  User question                                                       │
+  │    │                                                                 │
+  │    ├─ 1. Embed query ──────────────────────► Jina TEI                │
+  │    │                                                                 │
+  │    ├─ 2. Hybrid search ────────────────────► Milvus                  │
+  │    │      Dense HNSW (semantic similarity)                           │
+  │    │      + BM25 sparse (keyword matching)                           │
+  │    │      → Reciprocal Rank Fusion (k=60)                            │
+  │    │      → Top 20 candidates                                        │
+  │    │                                                                 │
+  │    ├─ 3. Rerank ───────────────────────────► Cross-encoder (TEI)     │
+  │    │      Score all 20 with cross-encoder     (gte-reranker, 149M)   │
+  │    │      → Keep top 3                                               │
+  │    │                                                                 │
+  │    ├─ 4. Generate ─────────────────────────► LLM API                 │
+  │    │      Top chunks injected as context       (Cerebras / Groq)     │
+  │    │      → Stream answer via SSE                                    │
+  │    │                                                                 │
+  │    └─ 5. Response                                                    │
+  │           SSE: sources event → LLM tokens → timing event             │
+  │                                                                      │
+  └──────────────────────────────────────────────────────────────────────┘
 ```
+
+### Why reranking matters
+
+Hybrid search retrieves 20 candidates using two complementary signals — dense vectors (semantic meaning) and BM25 (exact keyword matching). But vector similarity and keyword overlap are rough proxies. The cross-encoder reranker reads each candidate alongside the query as a single sequence and produces a precise relevance score. This typically promotes the most relevant chunks and demotes false positives, improving answer quality without increasing LLM context size.
 
 ---
 
@@ -138,10 +119,10 @@ Most RAG stacks glue together Python microservices with high per-request overhea
 
 ### Prerequisites
 
-- **Rust 1.70+** -- install via [rustup](https://rustup.rs/)
-- **Docker & Docker Compose** -- for local embeddings and Milvus
-- **Groq API key** -- get one at [console.groq.com](https://console.groq.com/)
-- **Cerebras API key** -- get one at [cloud.cerebras.ai](https://cloud.cerebras.ai/)
+- **Rust 1.70+** — install via [rustup](https://rustup.rs/)
+- **Docker & Docker Compose** — for Docling, embeddings, reranker, and Milvus
+- **Groq API key** — get one at [console.groq.com](https://console.groq.com/) (also powers vision model)
+- **Cerebras API key** — get one at [cloud.cerebras.ai](https://cloud.cerebras.ai/)
 
 ### 1. Clone and configure
 
@@ -164,7 +145,7 @@ CEREBRAS_API_KEY=csk_your-cerebras-key-here
 docker compose up -d
 ```
 
-This starts **Jina embeddings** (via HuggingFace TEI) and **Milvus 2.4** locally.
+This starts **Docling** (document extraction), **Jina embeddings** (TEI), **cross-encoder reranker** (TEI), and **Milvus 2.5** locally.
 
 ### 3. Build and run
 
@@ -177,16 +158,85 @@ The server starts at `http://127.0.0.1:8080`.
 
 ### 4. Try it out
 
-- **Chat UI** -- [http://localhost:8080/static/chat.html](http://localhost:8080/static/chat.html)
-- **Swagger UI** -- [http://localhost:8080/swagger-ui/](http://localhost:8080/swagger-ui/)
+- **Chat UI** — [http://localhost:8080/static/chat.html](http://localhost:8080/static/chat.html)
+- **Swagger UI** — [http://localhost:8080/swagger-ui/](http://localhost:8080/swagger-ui/)
+- **Docling UI** — [http://localhost:5001/ui](http://localhost:5001/ui)
 
 Upload a PDF, ask a question, and watch tokens stream back with source citations.
 
 ---
 
+## Supported File Formats
+
+| Format | Extension | Extraction Method |
+|--------|-----------|-------------------|
+| Plain text | `.txt` | Direct UTF-8 read |
+| PDF | `.pdf` | Docling (layout-aware, tables, OCR) |
+| Word | `.docx` | Docling |
+| PowerPoint | `.pptx` | Docling |
+| Excel | `.xlsx` | Docling |
+| HTML | `.html` | Docling |
+| ZIP archive | `.zip` | Unpacked, each entry processed individually |
+
+Docling provides:
+- **Table extraction** — 97.9% accuracy on complex tables via TableFormer
+- **Layout analysis** — multi-column, headers/footers handled correctly
+- **OCR** — automatic for scanned pages (skipped for digital text = fast)
+- **Image descriptions** — embedded images described by Llama 4 Scout vision model
+
+---
+
+## API Reference
+
+All endpoints live under `/api/v1`. Interactive docs at [`/swagger-ui/`](http://localhost:8080/swagger-ui/).
+
+### Documents
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/documents/upload` | Upload files — extract, chunk, embed, store in Milvus |
+| `POST` | `/documents/search` | Semantic search across embedded documents |
+| `GET`  | `/documents/backup` | Download full collection as gzip-compressed JSON |
+
+### Chat
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET`  | `/llms` | List supported models with provider names |
+| `POST` | `/chat-rag` | RAG: hybrid search, rerank, generate answer |
+| `POST` | `/chat-rag/stream` | SSE-streamed RAG (sources event + LLM tokens + timing) |
+
+### Evals
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/evals/run` | Run evaluation benchmark (3,045 questions) and download results as JSON |
+
+### Health
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET`  | `/health` | Liveness check |
+
+### Search result fields
+
+Every search hit and RAG source returns:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | i64 | Milvus document ID |
+| `file_name` | string | Original uploaded filename |
+| `file_size` | i64 | File size in bytes |
+| `chunk_index` | i64 | Position of chunk within the file |
+| `page_number` | i64 | Page the chunk came from (0 if unknown) |
+| `score` | f32 | Relevance score (from reranker or cosine similarity) |
+| `text` | string | Chunk content |
+
+---
+
 ## LLM Providers
 
-RustyRAG uses **Groq** and **Cerebras** as LLM providers because they offer the lowest inference latency available today -- Groq via custom LPU hardware and Cerebras via wafer-scale engine. Both expose OpenAI-compatible APIs, and you can switch between them per request.
+RustyRAG uses **Groq** and **Cerebras** for their low-latency inference hardware. Both expose OpenAI-compatible APIs.
 
 ### Groq
 - `llama-3.1-8b-instant`
@@ -200,112 +250,60 @@ RustyRAG uses **Groq** and **Cerebras** as LLM providers because they offer the 
 - `qwen-3-235b-a22b-instruct-2507`
 - `zai-glm-4.7`
 
-Override provider and model per request using `"provider"` and `"model"` fields in any `/chat` or `/chat-rag` endpoint.
-
----
-
-## Embeddings
-
-RustyRAG uses **jina-embeddings-v5-text-nano-retrieval** for vectorization. This model was selected for its exceptional performance-to-cost ratio: it ranks among the top small embedding models on the [MTEB benchmark](https://huggingface.co/spaces/mteb/leaderboard) while producing compact 768-dimensional vectors and running efficiently on CPU via HuggingFace Text Embeddings Inference (TEI).
-
-The model supports asymmetric retrieval (separate document/query task types), which RustyRAG uses automatically -- documents are embedded with the `retrieval.passage` task and queries with `retrieval.query`. See the [jina-embeddings-v5-text paper](https://arxiv.org/abs/2602.15547) for details on the architecture.
-
----
-
-## RAG Pipeline
-
-### Upload flow
-
-```
-File upload (.txt, .pdf, or .zip -- streamed to disk, never held in memory)
-  -> Text extraction with page numbers (PDF via pdf-extract / TXT via UTF-8)
-  -> ZIP? Unpack and process entries concurrently
-  -> Semantic chunking (sentence-boundary-aware, configurable size + overlap)
-  -> Contextual prefix generation per chunk via LLM (sliding page window)
-  -> Embed (prefix + chunk text) via local Jina TEI
-  -> Batch insert into Milvus (vectors encode contextual meaning)
-```
-
-### Contextual retrieval
-
-Each chunk is enriched with an LLM-generated context prefix before embedding. The LLM receives a document overview (first ~2K characters) plus a sliding window of pages around the chunk (2 pages before and after), and produces a 1-2 sentence description of the chunk's role in the document.
-
-This prefix is **concatenated with the chunk text before embedding**, so the resulting vector captures both the chunk content and its broader document context. At query time, the standard cosine similarity search naturally finds better matches because the stored vectors encode richer semantic meaning.
-
-The raw chunk text is stored separately in Milvus, keeping the LLM context clean.
-
-### Query flow
-
-```
-User question
-  -> Embed query via Jina TEI
-  -> Milvus HNSW search (top-K, cosine similarity against enriched vectors)
-  -> Inject retrieved chunks as system prompt context
-  -> Stream LLM answer via SSE (Groq or Cerebras)
-  -> Sources emitted as leading "event: sources" SSE event
-```
-
----
-
-## API Reference
-
-All endpoints live under `/api/v1`. Interactive documentation via Swagger UI at [`/swagger-ui/`](http://localhost:8080/swagger-ui/).
-
-<p>
-<img src="docs/swagger-ui.png" alt="Swagger UI" width="700"/>
-</p>
-
-### Documents
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/documents/upload` | Upload `.txt`, `.pdf`, or `.zip` -- chunks, embeds with contextual prefixes, stores in Milvus |
-| `POST` | `/documents/search` | Semantic search across embedded documents |
-
-### Chat
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET`  | `/llms` | List supported models with provider names |
-| `POST` | `/chat` | Single-turn LLM completion |
-| `POST` | `/chat/stream` | SSE-streamed LLM completion |
-| `POST` | `/chat-rag` | RAG: retrieve context, generate answer |
-| `POST` | `/chat-rag/stream` | SSE-streamed RAG (sources event + LLM tokens) |
-
-### Health
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET`  | `/health` | Liveness check |
-
-> Full request/response schemas are available in the Swagger UI above.
+### Vision
+- `meta-llama/llama-4-scout-17b-16e-instruct` (Groq) — describes images found inside documents
 
 ---
 
 ## Configuration
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `GROQ_API_KEY` | Groq API key | -- |
-| `CEREBRAS_API_KEY` | Cerebras API key | -- |
-| `MILVUS_URL` | Milvus REST API endpoint | `http://localhost:19530` |
-| `EMBEDDING_API_URL` | Embedding endpoint (OpenAI-compatible) | `http://localhost:7997/v1/embeddings` |
-| `EMBEDDING_MODEL` | Embedding model name | `jinaai/jina-embeddings-v5-text-nano-retrieval` |
-| `EMBEDDING_DIMENSION` | Vector dimensionality | `768` |
-| `EMBEDDING_MAX_BATCH_SIZE` | Chunks per embedding API call | `8` |
-| `CHUNK_SIZE` | Max characters per chunk (semantic splitting) | `2000` |
-| `CHUNK_OVERLAP` | Overlap characters between chunks | `200` |
-| `CONTEXTUAL_RETRIEVAL_PROVIDER` | LLM provider for context prefix generation | `cerebras` |
-| `CONTEXTUAL_RETRIEVAL_MODEL` | LLM model for context prefix generation | `gpt-oss-120b` |
-| `CONTEXTUAL_RETRIEVAL_CONCURRENCY` | Parallel LLM calls for context generation | `4` |
-| `CONTEXTUAL_RETRIEVAL_MAX_DOC_CHARS` | Max document chars per contextual prompt | `12000` |
-| `MILVUS_METRIC_TYPE` | Vector similarity metric | `COSINE` |
-| `MILVUS_INDEX_TYPE` | Milvus index type | `HNSW` |
-| `MILVUS_HNSW_M` | HNSW M parameter | `16` |
-| `MILVUS_HNSW_EF_CONSTRUCTION` | HNSW ef_construction | `256` |
-| `MILVUS_SEARCH_EF` | HNSW search ef (latency/recall trade-off) | `64` |
-| `HOST` | Server bind address | `127.0.0.1` |
-| `PORT` | Server port | `8080` |
+### Required
+
+| Variable | Description |
+|----------|-------------|
+| `HOST` | Server bind address |
+| `PORT` | Server port |
+| `GROQ_API_KEY` | Groq API key (also used for vision model) |
+| `CEREBRAS_API_KEY` | Cerebras API key |
+
+### Optional — services
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MILVUS_URL` | `http://localhost:19530` | Milvus REST API |
+| `EMBEDDING_API_URL` | `http://localhost:7997/v1/embeddings` | Embedding endpoint |
+| `EMBEDDING_MODEL` | `jinaai/jina-embeddings-v5-text-small-retrieval` | Embedding model |
+| `RERANKER_API_URL` | *(empty = disabled)* | TEI reranker endpoint |
+| `DOCLING_URL` | `http://localhost:5001` | Docling extraction API |
+| `VISION_MODEL` | `meta-llama/llama-4-scout-17b-16e-instruct` | Vision model for images |
+
+### Optional — tuning
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RETRIEVAL_LIMIT` | `20` | Chunks fetched from Milvus before reranking |
+| `RERANK_TOP_N` | `3` | Chunks kept after reranking |
+| `CHUNK_SIZE` | `2000` | Max characters per chunk |
+| `CHUNK_OVERLAP` | `200` | Overlap between chunks |
+| `EMBEDDING_DIMENSION` | `1024` | Vector dimensionality |
+| `CORS_ALLOWED_ORIGINS` | *(empty = permissive)* | Comma-separated allowed origins |
+
+See `.env.example` for the full list including Milvus index tuning and contextual retrieval options.
+
+---
+
+## Infrastructure
+
+All services run via Docker Compose:
+
+| Service | Image | Port | Role |
+|---------|-------|------|------|
+| **Embeddings** | `text-embeddings-inference:cuda-1.9` | 7997 | Jina v5 small (1024-dim) |
+| **Reranker** | `text-embeddings-inference:cuda-1.9` | 7998 | GTE reranker ModernBERT (149M) |
+| **Docling** | `docling-serve-cu128:v1.14.3` | 5001 | Document extraction (PDF/DOCX/PPTX) |
+| **Milvus** | `milvus:v2.5.27` | 19530 | Vector DB (HNSW + BM25) |
+
+GPU is used by embeddings, reranker, and Docling. The Rust server itself runs on CPU only.
 
 ---
 
@@ -314,28 +312,36 @@ All endpoints live under `/api/v1`. Interactive documentation via Swagger UI at 
 ```
 src/
 ├── main.rs                 # Entry point, server bootstrap
-├── config.rs               # Env-based config via serde + envy
+├── config.rs               # Env-based config (required/optional/tuning)
 ├── routes.rs               # Route registration
-├── errors.rs               # Unified AppError -> HTTP response mapping
+├── errors.rs               # AppError → HTTP response mapping
 ├── handlers/
-│   ├── chat.rs             # /llms, /chat, /chat/stream, /chat-rag, /chat-rag/stream
-│   ├── documents.rs        # /documents/upload, /documents/search, contextual retrieval
+│   ├── chat.rs             # /llms, /chat-rag + streaming variants
+│   ├── documents.rs        # /documents/upload, /documents/search, /documents/backup
+│   ├── evals.rs            # /evals/run (benchmark runner)
 │   └── health.rs           # /health
 ├── schemas/
-│   ├── requests.rs         # Validated request DTOs (serde + validator)
-│   └── responses.rs        # Response DTOs with utoipa OpenAPI schemas
+│   ├── requests.rs         # Request DTOs (serde + validator)
+│   └── responses.rs        # Response DTOs (utoipa OpenAPI schemas)
 ├── services/
-│   ├── llm.rs              # Groq + Cerebras OpenAI-compatible client
-│   ├── embeddings.rs       # Local/OpenAI-compatible embedding client
-│   ├── milvus.rs           # Milvus v2 REST client (collections, insert, search)
-│   └── document.rs         # PDF/TXT extraction, semantic chunking
+│   ├── docling.rs          # Docling API client + vision image descriptions
+│   ├── document.rs         # Document extraction routing, semantic chunking
+│   ├── embeddings.rs       # Jina/OpenAI-compatible embedding client
+│   ├── llm.rs              # Groq + Cerebras LLM client
+│   ├── milvus.rs           # Milvus v2 REST client (hybrid search, BM25, backup)
+│   └── reranker.rs         # TEI cross-encoder reranker client
 ├── prompts/
 │   ├── mod.rs              # Prompt builder functions
-│   ├── rag_system_prompt.txt       # RAG system prompt template
-│   └── contextual_prompt.txt      # Contextual retrieval prompt template
+│   ├── rag_system_prompt.txt
+│   └── contextual_prompt.txt
+scripts/
+└── judge_evals.py          # LLM-as-judge evaluation script
 static/
 └── chat.html               # Built-in SSE chat + RAG frontend
-docker-compose.yml          # Jina TEI embeddings + Milvus 2.4
+docs/
+├── eval_data.csv           # 3,045 evaluation questions with expected answers
+└── eval_results.json       # Benchmark results from latest eval run
+docker-compose.yml          # Docling + Jina TEI + Reranker + Milvus 2.5
 ```
 
 ---
@@ -346,13 +352,14 @@ docker-compose.yml          # Jina TEI embeddings + Milvus 2.4
 |-------|-----------|------|
 | **Runtime** | Rust + Tokio + Actix-web 4 | Async web server |
 | **LLM** | Groq (LPU) + Cerebras (wafer-scale) | Low-latency chat completions + SSE streaming |
-| **Embeddings** | Jina v5 text nano retrieval (TEI) | Local vectorization, 768-dim, MTEB-leading small model |
-| **Contextual Retrieval** | LLM-generated chunk prefixes | Enriched embeddings for better search accuracy |
-| **Vector DB** | Milvus 2.4 (HNSW, cosine) | Sub-millisecond approximate nearest neighbor search |
+| **Vision** | Llama 4 Scout 17B (Groq) | Image descriptions inside documents |
+| **Embeddings** | Jina v5 text small retrieval (TEI) | Local vectorization, 1024-dim |
+| **Reranker** | GTE reranker ModernBERT base (TEI) | Cross-encoder reranking (149M params) |
+| **Document extraction** | Docling (IBM) | PDF/DOCX/PPTX tables, OCR, layout analysis |
+| **Vector DB** | Milvus 2.5 (HNSW + BM25) | Hybrid dense + sparse search with RRF |
 | **Chunking** | text-splitter crate | Semantic sentence-boundary-aware splitting |
 | **Docs** | utoipa + Swagger UI | Auto-generated interactive API documentation |
-| **Ingestion** | pdf-extract + zip crate | PDF text extraction with page numbers, ZIP processing |
-| **Infra** | Docker Compose | One-command local embeddings + Milvus setup |
+| **Infra** | Docker Compose | One-command local stack |
 
 ---
 
@@ -368,6 +375,12 @@ RUST_LOG=debug cargo run
 # Production build
 cargo build --release
 ./target/release/rustyrag
+
+# Run evaluation benchmark
+curl -X POST http://localhost:8080/api/v1/evals/run -H 'Content-Type: application/json' -d '{}' -o eval_results.json
+
+# Judge evaluation results
+python3 scripts/judge_evals.py docs/eval_results.json
 ```
 
 ---

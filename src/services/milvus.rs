@@ -302,7 +302,8 @@ impl MilvusClient {
 
     // ── Export (query all rows) ────────────────────────────────────
 
-    /// Fetch every row from a collection, paginating in batches.
+    /// Fetch every row from a collection using cursor-based pagination
+    /// (keyset pagination on `id`) to avoid Milvus offset limits.
     /// Returns all fields including embeddings.
     pub async fn query_all(
         &self,
@@ -312,15 +313,14 @@ impl MilvusClient {
         let output_fields: Vec<&str> = OUTPUT_FIELDS.iter().copied().chain(["embedding"]).collect();
 
         let mut all_rows: Vec<serde_json::Value> = Vec::new();
-        let mut offset: i64 = 0;
+        let mut last_id: i64 = 0;
 
         loop {
             let body = json!({
                 "collectionName": collection_name,
-                "filter": "id > 0",
+                "filter": format!("id > {last_id}"),
                 "outputFields": output_fields,
                 "limit": PAGE_SIZE,
-                "offset": offset,
             });
 
             let resp = self
@@ -334,11 +334,21 @@ impl MilvusClient {
             }
 
             if let Some(arr) = resp.data.as_array() {
+                // Track the max id for the next page cursor
+                for item in arr {
+                    if let Some(id) = item["id"].as_i64() {
+                        if id > last_id {
+                            last_id = id;
+                        }
+                    }
+                }
                 all_rows.extend(arr.iter().cloned());
             }
 
-            offset += rows as i64;
-            tracing::info!("Backup: fetched {offset} rows so far from '{collection_name}'…");
+            tracing::info!(
+                "Backup: fetched {} rows so far from '{collection_name}'…",
+                all_rows.len()
+            );
 
             if rows < PAGE_SIZE as usize {
                 break;

@@ -2021,6 +2021,7 @@ dependencies = [
  "csv",
  "dotenvy",
  "envy",
+ "flate2",
  "futures-util",
  "regex",
  "reqwest",

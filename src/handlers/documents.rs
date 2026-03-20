@@ -2,6 +2,8 @@ use std::io::Write as _;
 
 use actix_multipart::Multipart;
 use actix_web::{get, post, web, HttpResponse};
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use futures_util::StreamExt;
 use tempfile::NamedTempFile;
 
@@ -537,16 +539,30 @@ pub async fn backup_collection(
         "data": rows,
     });
 
-    let body = serde_json::to_vec(&backup)
+    let json_bytes = serde_json::to_vec(&backup)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("JSON serialization error: {e}")))?;
 
-    let filename = format!("{collection_name}_backup.json");
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+    encoder
+        .write_all(&json_bytes)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Gzip compression error: {e}")))?;
+    let compressed = encoder
+        .finish()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Gzip finish error: {e}")))?;
+
+    tracing::info!(
+        "Backup compressed: {}MB → {}MB",
+        json_bytes.len() / (1024 * 1024),
+        compressed.len() / (1024 * 1024),
+    );
+
+    let filename = format!("{collection_name}_backup.json.gz");
 
     Ok(HttpResponse::Ok()
-        .content_type("application/json")
+        .content_type("application/gzip")
         .insert_header((
             "Content-Disposition",
             format!("attachment; filename=\"{filename}\""),
         ))
-        .body(body))
+        .body(compressed))
 }

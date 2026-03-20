@@ -300,6 +300,54 @@ impl MilvusClient {
         Ok(Self::parse_results(&resp_result.data))
     }
 
+    // ── Export (query all rows) ────────────────────────────────────
+
+    /// Fetch every row from a collection, paginating in batches.
+    /// Returns all fields including embeddings.
+    pub async fn query_all(
+        &self,
+        collection_name: &str,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        const PAGE_SIZE: i64 = 1000;
+        let output_fields: Vec<&str> = OUTPUT_FIELDS.iter().copied().chain(["embedding"]).collect();
+
+        let mut all_rows: Vec<serde_json::Value> = Vec::new();
+        let mut offset: i64 = 0;
+
+        loop {
+            let body = json!({
+                "collectionName": collection_name,
+                "filter": "id > 0",
+                "outputFields": output_fields,
+                "limit": PAGE_SIZE,
+                "offset": offset,
+            });
+
+            let resp = self
+                .post("entities/query", body)
+                .await
+                .context("Milvus: failed to query for backup")?;
+
+            let rows = resp.data.as_array().map(|a| a.len()).unwrap_or(0);
+            if rows == 0 {
+                break;
+            }
+
+            if let Some(arr) = resp.data.as_array() {
+                all_rows.extend(arr.iter().cloned());
+            }
+
+            offset += rows as i64;
+            tracing::info!("Backup: fetched {offset} rows so far from '{collection_name}'…");
+
+            if rows < PAGE_SIZE as usize {
+                break;
+            }
+        }
+
+        Ok(all_rows)
+    }
+
     // ── Internal helpers ────────────────────────────────────────────
 
     /// POST to Milvus REST API v2 and check for errors.

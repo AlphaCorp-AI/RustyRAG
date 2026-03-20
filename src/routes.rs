@@ -9,5 +9,7 @@ pub fn configure(cfg: &mut ServiceConfig) {
         .service(handlers::chat::chat_rag)
         .service(handlers::chat::chat_rag_stream)
         .service(handlers::documents::upload_document)
-        .service(handlers::documents::search_documents);
+        .service(handlers::documents::search_documents)
+        .service(handlers::documents::backup_collection)
+        .service(handlers::evals::run_evals);
 }

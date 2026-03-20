@@ -149,6 +149,7 @@ async fn main() -> std::io::Result<()> {
                 api.tags = Some(vec![
                     tag("Chat", "RAG chat completions with hybrid search and cross-encoder reranking"),
                     tag("Documents", "Document upload (PDF, DOCX, PPTX, XLSX, HTML, TXT), embedding & semantic search"),
+                    tag("Evals", "Run evaluation benchmarks against the RAG pipeline"),
                     tag("Health", "Health & readiness checks"),
                 ]);
 

@@ -1,7 +1,7 @@
 use std::io::Write as _;
 
 use actix_multipart::Multipart;
-use actix_web::{post, web, HttpResponse};
+use actix_web::{get, post, web, HttpResponse};
 use futures_util::StreamExt;
 use tempfile::NamedTempFile;
 
@@ -491,4 +491,62 @@ pub async fn search_documents(
         collection: collection_name.to_string(),
         results,
     }))
+}
+
+// ── Backup endpoint ─────────────────────────────────────────────
+
+#[utoipa::path(
+    get,
+    path = "/documents/backup",
+    params(
+        ("collection_name" = Option<String>, Query, description = "Collection to back up (default: documents)"),
+    ),
+    responses(
+        (status = 200, description = "JSON backup file download", content_type = "application/json"),
+        (status = 400, description = "Bad request"),
+        (status = 502, description = "Upstream service error"),
+    ),
+    tag = "Documents"
+)]
+#[get("/documents/backup")]
+pub async fn backup_collection(
+    query: web::Query<DocumentUploadQuery>,
+    milvus: web::Data<MilvusClient>,
+) -> Result<HttpResponse, AppError> {
+    let collection_name = query
+        .collection_name
+        .as_deref()
+        .unwrap_or(DEFAULT_COLLECTION);
+    validate_collection_name(collection_name)?;
+
+    tracing::info!("Starting backup of collection '{collection_name}'…");
+
+    let rows = milvus
+        .query_all(collection_name)
+        .await
+        .map_err(|e| AppError::MilvusError(e.to_string()))?;
+
+    tracing::info!(
+        "Backup of '{collection_name}' complete: {} rows",
+        rows.len()
+    );
+
+    let backup = serde_json::json!({
+        "collection": collection_name,
+        "count": rows.len(),
+        "data": rows,
+    });
+
+    let body = serde_json::to_vec(&backup)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("JSON serialization error: {e}")))?;
+
+    let filename = format!("{collection_name}_backup.json");
+
+    Ok(HttpResponse::Ok()
+        .content_type("application/json")
+        .insert_header((
+            "Content-Disposition",
+            format!("attachment; filename=\"{filename}\""),
+        ))
+        .body(body))
 }

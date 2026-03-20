@@ -45,15 +45,15 @@ fn validated_top_n(limit: Option<i64>, default: usize) -> Result<usize, AppError
 
 /// Holds the result of the retrieval + reranking pipeline, ready for
 /// the LLM call.
-struct RagContext {
-    sources: Vec<RagSource>,
-    system_prompt: String,
+pub(crate) struct RagContext {
+    pub sources: Vec<RagSource>,
+    pub system_prompt: String,
 }
 
 /// Embed the query → hybrid search Milvus → rerank → build LLM context.
 ///
 /// Returns `Ok(None)` when the collection has no matching documents.
-async fn build_rag_context(
+pub(crate) async fn build_rag_context(
     body: &ChatRagRequest,
     embeddings: &EmbeddingClient,
     milvus: &MilvusClient,

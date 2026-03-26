@@ -14,13 +14,14 @@ services:
         "--max-model-len",
         "8192",
         "--enforce-eager",
+        "--gpu-memory-utilization",
+        "0.3",
         "--port",
         "80",
       ]
     environment:
       HF_HOME: /data
       CUDA_VISIBLE_DEVICES: "0"
-      VLLM_USE_V1: "0"
     volumes:
       - hf_cache:/data
     ports:

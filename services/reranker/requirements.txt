@@ -1,5 +1,5 @@
 torch
-transformers
+transformers==4.51.3
 accelerate
 fastapi
 uvicorn[standard]

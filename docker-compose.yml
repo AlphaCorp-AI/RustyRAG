@@ -6,7 +6,7 @@ services:
     command:
       [
         "--model-id",
-        "jinaai/jina-embeddings-v5-text-nano-retrieval",
+        "jinaai/jina-embeddings-v5-text-small-retrieval",
         "--pooling",
         "last-token",
         "--tokenization-workers",

@@ -88,12 +88,12 @@ mod defaults {
     // Services
     pub fn milvus_url() -> String { "http://localhost:19530".into() }
     pub fn embedding_api_url() -> String { "http://localhost:7997/v1/embeddings".into() }
-    pub fn embedding_model() -> String { "jinaai/jina-embeddings-v5-text-small-retrieval".into() }
+    pub fn embedding_model() -> String { "jinaai/jina-embeddings-v5-text-nano-retrieval".into() }
     pub fn docling_url() -> String { "http://localhost:5001".into() }
     pub fn vision_model() -> String { "meta-llama/llama-4-scout-17b-16e-instruct".into() }
 
     // Embedding tuning
-    pub fn embedding_dimension() -> i64 { 1024 }
+    pub fn embedding_dimension() -> i64 { 768 }
     pub fn embedding_max_batch_size() -> usize { 8 }
 
     // Retrieval pipeline

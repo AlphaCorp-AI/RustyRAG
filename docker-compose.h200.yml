@@ -1,0 +1,153 @@
+# docker-compose.h200.yml — Optimized for DGX H200 (140 GB VRAM, 224 CPU, 258 GB RAM)
+#
+# VRAM budget:
+#   Embeddings (jina-v5-nano):     ~0.5 GB
+#   Reranker (jina-reranker-v3):   ~1.2 GB
+#   Docling:                       ~4 GB
+#   Total:                         ~6 GB / 140 GB
+#
+# LLM inference stays on Cerebras/Groq — faster than self-hosted on single GPU.
+#
+# Usage:
+#   docker compose -f docker-compose.h200.yml up -d --build
+
+services:
+  embeddings:
+    image: vllm/vllm-openai:latest
+    container_name: rustyrag_embeddings
+    restart: unless-stopped
+    command:
+      [
+        "--model",
+        "jinaai/jina-embeddings-v5-text-nano-retrieval",
+        "--task",
+        "embed",
+        "--trust-remote-code",
+        "--dtype",
+        "float16",
+        "--max-model-len",
+        "8192",
+        "--port",
+        "80",
+      ]
+    environment:
+      HF_HOME: /data
+      CUDA_VISIBLE_DEVICES: "0"
+    volumes:
+      - hf_cache:/data
+    ports:
+      - "7997:80"
+    ipc: host
+    deploy:
+      resources:
+        limits:
+          memory: 16G
+          cpus: "16"
+        reservations:
+          memory: 4G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+
+  reranker:
+    build: ./services/reranker
+    container_name: rustyrag_reranker
+    restart: unless-stopped
+    environment:
+      MODEL_ID: "jinaai/jina-reranker-v3"
+      HF_HOME: /data
+      CUDA_VISIBLE_DEVICES: "0"
+    volumes:
+      - hf_cache:/data
+    ports:
+      - "7998:80"
+    deploy:
+      resources:
+        limits:
+          memory: 12G
+          cpus: "8"
+        reservations:
+          memory: 4G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+
+  docling:
+    image: quay.io/docling-project/docling-serve-cu128:v1.14.3
+    container_name: rustyrag_docling
+    restart: unless-stopped
+    environment:
+      DOCLING_SERVE_ENABLE_UI: "true"
+      DOCLING_SERVE_HOST: "0.0.0.0"
+      DOCLING_SERVE_PORT: "5001"
+      DOCLING_SERVE_MAX_SYNC_WAIT: "600"
+      DOCLING_SERVE_ENG_LOC_NUM_WORKERS: "4"
+      DOCLING_SERVE_ENG_LOC_SHARE_MODELS: "True"
+      CUDA_VISIBLE_DEVICES: "0"
+    ports:
+      - "5001:5001"
+    deploy:
+      resources:
+        limits:
+          memory: 16G
+          cpus: "16"
+        reservations:
+          memory: 4G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+
+  milvus-db:
+    image: milvusdb/milvus:v2.5.27
+    container_name: rustyrag_milvus
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_USE_EMBED: "true"
+      ETCD_DATA_DIR: /var/lib/milvus/etcd
+      COMMON_STORAGETYPE: local
+    volumes:
+      - rustyrag_milvus_data:/var/lib/milvus
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 32G
+          cpus: "16"
+        reservations:
+          memory: 8G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+volumes:
+  hf_cache:
+  rustyrag_milvus_data:

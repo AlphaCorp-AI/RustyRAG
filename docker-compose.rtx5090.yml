@@ -18,10 +18,9 @@ services:
     restart: unless-stopped
     command:
       [
-        "--model",
         "jinaai/jina-embeddings-v5-text-nano-retrieval",
-        "--task",
-        "embed",
+        "--runner",
+        "pooling",
         "--trust-remote-code",
         "--dtype",
         "float16",

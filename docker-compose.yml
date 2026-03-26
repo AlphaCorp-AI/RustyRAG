@@ -1,3 +1,16 @@
+# docker-compose.yml — RTX 4090 on Vast.ai (24 GB VRAM, 16 CPU, 48 GB RAM, 150 GB disk)
+#
+# VRAM budget:
+#   Embeddings (jina-v5-nano):     ~0.5 GB
+#   Reranker (jina-reranker-v3):   ~1.2 GB
+#   Docling:                       ~4 GB
+#   Total:                         ~6 GB / 24 GB
+#
+# LLM inference stays on Cerebras/Groq.
+#
+# Usage:
+#   docker compose up -d --build
+
 services:
   embeddings:
     build: ./services/embeddings
@@ -14,8 +27,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 8G
-          cpus: "4"
+          memory: 6G
+          cpus: "2"
         reservations:
           memory: 2G
           devices:

@@ -390,7 +390,8 @@ impl MilvusClient {
             .await?;
 
         if resp.code != 0 {
-            anyhow::bail!("Milvus {path} error: {}", resp.message);
+            tracing::error!("Milvus {path} error (code {}): {}", resp.code, resp.message);
+            anyhow::bail!("Milvus {path} error (code {}): {}", resp.code, resp.message);
         }
 
         Ok(resp)

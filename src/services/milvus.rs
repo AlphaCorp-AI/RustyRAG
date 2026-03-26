@@ -246,58 +246,74 @@ impl MilvusClient {
         Ok(Self::parse_results(&resp.data))
     }
 
-    // ── Hybrid search (dense + BM25 with RRF) ──────────────────────
+    // ── BM25-only text search (sparse) ─────────────────────────────
 
-    pub async fn hybrid_search(
+    /// Search using only the BM25 sparse index — does NOT need an embedding
+    /// vector, so it can run concurrently with embedding generation.
+    pub async fn text_search(
         &self,
         collection_name: &str,
-        embedding: Vec<f32>,
         query_text: &str,
         limit: i64,
-        options: Option<SearchOptions>,
     ) -> anyhow::Result<Vec<SearchResult>> {
-        let ef = options.and_then(|v| v.ef).unwrap_or(self.default_search_ef);
-
         let body = json!({
             "collectionName": collection_name,
-            "search": [
-                {
-                    "data": [embedding],
-                    "annsField": "embedding",
-                    "limit": limit,
-                    "params": { "ef": ef }
-                },
-                {
-                    "data": [query_text],
-                    "annsField": "sparse_embedding",
-                    "limit": limit
-                }
-            ],
-            "rerank": { "strategy": "rrf", "params": { "k": 60 } },
+            "data": [query_text],
+            "annsField": "sparse_embedding",
             "limit": limit,
             "outputFields": OUTPUT_FIELDS,
         });
 
-        let resp_result = self
-            .http
-            .post(format!("{}/v2/vectordb/entities/hybrid_search", self.base_url))
-            .json(&body)
-            .send()
+        let resp = self
+            .post("entities/search", body)
             .await
-            .context("Milvus: failed to hybrid_search")?
-            .json::<MilvusResponse>()
-            .await
-            .context("Milvus: bad response from hybrid_search")?;
+            .context("Milvus: failed to text_search")?;
 
-        if resp_result.code != 0 {
-            tracing::warn!(
-                "Milvus hybrid_search failed ({}), falling back to dense search",
-                resp_result.message
-            );
-            return self.search(collection_name, embedding, limit, None).await;
+        Ok(Self::parse_results(&resp.data))
+    }
+
+    // ── RRF merge ────────────────────────────────────────────────────
+
+    /// Reciprocal Rank Fusion: merge two ranked lists into one.
+    /// `k` controls how much lower ranks are dampened (lower k = sharper).
+    pub fn rrf_merge(
+        dense: Vec<SearchResult>,
+        sparse: Vec<SearchResult>,
+        k: f32,
+        limit: usize,
+    ) -> Vec<SearchResult> {
+        use std::collections::HashMap;
+
+        // Map id → (best SearchResult, cumulative RRF score)
+        let mut scores: HashMap<i64, (SearchResult, f32)> = HashMap::new();
+
+        for (rank, hit) in dense.into_iter().enumerate() {
+            let rrf = 1.0 / (k + rank as f32 + 1.0);
+            scores
+                .entry(hit.id)
+                .and_modify(|(_, s)| *s += rrf)
+                .or_insert((hit, rrf));
         }
 
-        Ok(Self::parse_results(&resp_result.data))
+        for (rank, hit) in sparse.into_iter().enumerate() {
+            let rrf = 1.0 / (k + rank as f32 + 1.0);
+            scores
+                .entry(hit.id)
+                .and_modify(|(_, s)| *s += rrf)
+                .or_insert((hit, rrf));
+        }
+
+        let mut merged: Vec<SearchResult> = scores
+            .into_values()
+            .map(|(mut hit, score)| {
+                hit.score = score;
+                hit
+            })
+            .collect();
+
+        merged.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        merged.truncate(limit);
+        merged
     }
 
     // ── Export (query all rows) ────────────────────────────────────

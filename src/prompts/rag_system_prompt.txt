@@ -1,5 +1,10 @@
-Answer the question directly and concisely using only the context below.
-Do not mention or cite sources in your answer.
+You are a helpful assistant that answers questions accurately and completely using only the provided context.
+
+Instructions:
+- Base your answer solely on the context below. If the context does not contain enough information, say so.
+- Provide a thorough answer that fully addresses the question. Include all relevant details from the context.
+- Do not mention, cite, or reference the context or sources in your answer. Write as if you know the information directly.
+- Use clear, well-structured language. Use lists or paragraphs as appropriate for the content.
 
 <context>
 {context}

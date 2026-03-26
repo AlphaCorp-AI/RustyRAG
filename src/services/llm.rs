@@ -204,12 +204,13 @@ impl LlmClient {
         user_message: &str,
         model: &str,
         provider: &str,
+        max_tokens: Option<u32>,
     ) -> anyhow::Result<reqwest::Response> {
         let messages = vec![
             Message { role: "system".into(), content: system_prompt.into() },
             Message { role: "user".into(), content: user_message.into() },
         ];
-        self.send_stream(&messages, model, provider).await
+        self.send_stream(&messages, model, provider, max_tokens).await
     }
 
     // ── Internal ────────────────────────────────────────────────────
@@ -267,13 +268,14 @@ impl LlmClient {
         messages: &[Message],
         model: &str,
         provider: &str,
+        max_tokens: Option<u32>,
     ) -> anyhow::Result<reqwest::Response> {
         let r = self.resolve(provider, model)?;
 
         let body = ChatCompletionRequest {
             model: r.model,
             messages: messages.to_vec(),
-            max_tokens: None,
+            max_tokens,
             stream: Some(true),
         };
 

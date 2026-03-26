@@ -1,11 +1,11 @@
-# RustyRAG - GPU Server Setup Guide
+# RustyRAG - Azure NC8as_T4_v3 Setup Guide
 
-Step-by-step setup for a fresh Ubuntu instance with an NVIDIA GPU (e.g. VastAI, RunPod, bare metal).
+Step-by-step setup for an Azure NC8as_T4_v3 instance (8 vCPU, 56 GB RAM, 1x T4 16 GB VRAM).
 
 ## Prerequisites
 
-- Ubuntu 22.04+ with NVIDIA GPU (tested on RTX 4090)
-- NVIDIA drivers installed (`nvidia-smi` should work)
+- Azure NC8as_T4_v3 VM running Ubuntu 22.04+
+- NVIDIA drivers installed (`nvidia-smi` should show the T4)
 - API keys for [Groq](https://console.groq.com/) and/or [Cerebras](https://cloud.cerebras.ai/)
 
 ## 1. Install system dependencies
@@ -61,17 +61,20 @@ All other settings have sensible defaults for the docker-compose stack. See `.en
 ## 3. Start infrastructure services
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
-This starts four services:
+The `--build` flag is needed on first run to build the reranker sidecar image.
 
-| Service | Port | What it does |
-|---------|------|-------------|
-| **embeddings** (TEI + Jina v5 small) | 7997 | Generates 1024-dim embeddings on GPU |
-| **reranker** (TEI + Jina Reranker v3) | 7998 | Cross-encoder reranking on GPU |
-| **docling** | 5001 | Extracts text from PDF/DOCX/PPTX/XLSX |
-| **milvus** | 19530 | Vector database (hybrid dense + BM25 search) |
+This starts four services sharing the single T4 GPU:
+
+| Service | Port | Model | GPU VRAM |
+|---------|------|-------|----------|
+| **embeddings** (TEI + Jina v5 nano) | 7997 | `jina-embeddings-v5-text-nano-retrieval` (239M, 768-dim) | ~0.5 GB |
+| **reranker** (FastAPI + Jina Reranker v3) | 7998 | `jina-reranker-v3` (0.6B, listwise) | ~1.2 GB |
+| **docling** | 5001 | Document extraction (PDF/DOCX/PPTX/XLSX) | ~4 GB |
+| **milvus** | 19530 | Vector database (hybrid dense + BM25) | CPU only |
+| | | **Total** | **~6 GB / 16 GB** |
 
 Wait for all services to become healthy (first run downloads models, can take a few minutes):
 
@@ -111,7 +114,7 @@ Verify:
 
 ```bash
 curl http://localhost:8080/api/v1/health
-# {"status":"ok","version":"0.3.0"}
+# {"status":"ok","version":"0.4.0"}
 ```
 
 ## 5. Access the UI
@@ -162,6 +165,19 @@ curl -N -X POST http://localhost:8080/api/v1/chat-rag/stream \
 | POST | `/api/v1/chat-rag` | RAG chat (full response) |
 | POST | `/api/v1/chat-rag/stream` | RAG chat (SSE stream) |
 
+## Pipeline defaults (v0.4)
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| Embedding model | jina-v5-text-nano | 768-dim, 239M params |
+| Reranker | jina-reranker-v3 | 0.6B, listwise, CC BY-NC 4.0 |
+| Chunk size | 1000 chars | 150 char overlap |
+| Retrieval limit | 20 candidates | Dense + BM25 via RRF (k=20) |
+| Rerank top N | 5 | Final context chunks sent to LLM |
+| HNSW ef (search) | 128 | Higher recall than default 64 |
+| HNSW M | 16 | Connections per node |
+| HNSW ef (build) | 256 | Construction effort |
+
 ## Running as a background service
 
 ```bash
@@ -195,12 +211,11 @@ journalctl -u rustyrag -f
 nohup cargo run --release > rustyrag.log 2>&1 &
 ```
 
-## Exposing to the internet (VastAI)
+## Exposing to the internet
 
-VastAI maps container ports automatically. If running on a VastAI instance, the app is already accessible via the instance's public IP on the mapped port. For other setups:
+On Azure, configure the NSG (Network Security Group) to allow inbound traffic on port 8080, then bind to all interfaces:
 
 ```bash
-# Change bind address from localhost to all interfaces
 # In .env:
 HOST=0.0.0.0
 PORT=8080
@@ -219,15 +234,23 @@ sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
 ```
 
-**TEI containers crash or OOM:**
+**Reranker sidecar won't start:**
 ```bash
-# Check logs
-docker compose logs embeddings
+# Check build and runtime logs
 docker compose logs reranker
 
-# If VRAM is limited, fall back to CPU for the reranker:
-# In docker-compose.yml, change reranker image to cpu-1.9
-# and remove the GPU device reservation
+# Rebuild the image if dependencies changed
+docker compose build reranker
+docker compose up -d reranker
+```
+
+**TEI or reranker OOM on T4:**
+```bash
+# Check GPU memory usage
+nvidia-smi
+
+# If VRAM is tight, reduce embedding batch size in .env:
+EMBEDDING_MAX_BATCH_SIZE=4
 ```
 
 **Milvus won't start:**
@@ -242,7 +265,7 @@ docker compose up -d
 
 **Model download slow on first startup:**
 ```bash
-# TEI downloads models to the hf_cache volume on first run
+# TEI and the reranker download models to the hf_cache volume on first run
 # Check download progress:
 docker compose logs -f embeddings
 docker compose logs -f reranker

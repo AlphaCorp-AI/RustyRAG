@@ -1,32 +1,16 @@
 services:
   embeddings:
-    image: vllm/vllm-openai:latest
+    build: ./services/embeddings
     container_name: rustyrag_embeddings
     restart: unless-stopped
-    command:
-      [
-        "jinaai/jina-embeddings-v5-text-nano-retrieval",
-        "--runner",
-        "pooling",
-        "--trust-remote-code",
-        "--dtype",
-        "float16",
-        "--max-model-len",
-        "8192",
-        "--enforce-eager",
-        "--gpu-memory-utilization",
-        "0.3",
-        "--port",
-        "80",
-      ]
     environment:
+      MODEL_ID: "jinaai/jina-embeddings-v5-text-nano-retrieval"
       HF_HOME: /data
       CUDA_VISIBLE_DEVICES: "0"
     volumes:
       - hf_cache:/data
     ports:
       - "7997:80"
-    ipc: host
     deploy:
       resources:
         limits:

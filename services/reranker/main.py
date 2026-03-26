@@ -23,7 +23,7 @@ async def lifespan(app: FastAPI):
     model = AutoModel.from_pretrained(
         MODEL_ID,
         trust_remote_code=True,
-        dtype="auto",
+        torch_dtype="auto",
     )
     model.to(DEVICE)
     model.eval()

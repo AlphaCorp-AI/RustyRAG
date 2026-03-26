@@ -233,6 +233,7 @@ impl MilvusClient {
         let body = json!({
             "collectionName": collection_name,
             "data": [embedding],
+            "annsField": "embedding",
             "limit": limit,
             "outputFields": OUTPUT_FIELDS,
             "searchParams": { "params": { "ef": ef } },

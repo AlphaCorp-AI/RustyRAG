@@ -81,7 +81,7 @@ services:
       DOCLING_SERVE_HOST: "0.0.0.0"
       DOCLING_SERVE_PORT: "5001"
       DOCLING_SERVE_MAX_SYNC_WAIT: "600"
-      DOCLING_SERVE_ENG_LOC_NUM_WORKERS: "2"
+      DOCLING_SERVE_ENG_LOC_NUM_WORKERS: "4"
       DOCLING_SERVE_ENG_LOC_SHARE_MODELS: "True"
       CUDA_VISIBLE_DEVICES: "0"
     ports:
@@ -89,8 +89,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 10G
-          cpus: "8"
+          memory: 14G
+          cpus: "10"
         reservations:
           memory: 2G
           devices:

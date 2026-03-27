@@ -46,6 +46,7 @@ pub struct DocumentSearchRequest {
 pub struct ChatRagRequest {
     /// The user's question
     #[validate(length(min = 1, max = 10_000))]
+    #[schema(example = "What is retrieval augmented generation?")]
     pub message: String,
 
     /// Milvus collection to search for context (defaults to "documents")

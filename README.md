@@ -2,9 +2,9 @@
 
 # RustyRAG
 
-### Production-grade RAG in a single Rust binary
+### The fastest open-source RAG API on GitHub
 
-Hybrid search, cross-encoder reranking, Docling document extraction, and sub-500ms answers. No GPU required for the server.
+Sub-200ms time-to-first-token. Hybrid search + cross-encoder reranking + streaming answers from the fastest LLM providers on the planet. Written in Rust. No GPU required for the server.
 
 <br/>
 
@@ -30,88 +30,134 @@ Built by **Ignas Vaitukaitis** &nbsp; <a href="https://www.linkedin.com/in/ignas
 
 ---
 
-## Evaluation Results
+## Performance
 
-LLM-as-judge evaluation on 3,045 questions from [Open RAG Bench](https://github.com/vectara/open-rag-bench) (academic papers). The judge model (`qwen-3-235b`) compares RustyRAG's answer against a ground-truth expected answer and scores it pass/fail.
+Benchmarked on **3,045 questions** from [Open RAG Bench](https://github.com/vectara/open-rag-bench) (academic papers, 1,000 PDFs, 57,347 chunks). LLM-as-judge evaluation using `qwen-3-235b`. Infrastructure running on **VastAI RTX 4090** (USA region).
 
-| Metric | Value |
-|--------|-------|
-| **Pass rate** | **2,648 / 3,045 (87.0%)** |
-| Fail rate | 397 / 3,045 (13.0%) |
-| Avg TTFT (time to first token) | 398ms |
-| Avg total response time | 466ms |
-| Benchmark | [Open RAG Bench](https://github.com/vectara/open-rag-bench) |
-| Corpus | 977 PDFs (57,347 chunks) |
-| LLM | Cerebras `qwen-3-235b-a22b-instruct-2507` |
-| Embeddings | `jina-embeddings-v5-text-small-retrieval` (1024-dim) |
-| Reranker | `gte-reranker-modernbert-base` (149M params) |
-| Search | Hybrid (dense HNSW + BM25) with RRF fusion |
-| Retrieval | 20 candidates retrieved, top 3 after reranking |
+### Benchmark Results
+
+```
+                With Reranker                         Without Reranker
+  ┌───────────────────────────────────┐    ┌───────────────────────────────────┐
+  │                                   │    │                                   │
+  │   Pass Rate:  94.5%               │    │   Pass Rate:  91.6%               │
+  │   ████████████████████████░░░     │    │   ██████████████████████░░░░░     │
+  │   2,857 / 3,024 judged            │    │   2,767 / 3,020 judged            │
+  │                                   │    │                                   │
+  └───────────────────────────────────┘    └───────────────────────────────────┘
+```
+
+### Latency Comparison
+
+```
+  Time to First Token (TTFT)
+  ──────────────────────────────────────────────────────────
+  With Reranker     ████████████████████████████  279ms
+  Without Reranker  ████████████████████          181ms
+
+  Total Response Time
+  ──────────────────────────────────────────────────────────
+  With Reranker     ████████████████████████████████████████████████████████████  883ms
+  Without Reranker  ██████████████████████████████████████                       511ms
+```
+
+### Summary
+
+| Metric | With Reranker | Without Reranker |
+|--------|:---:|:---:|
+| **Pass rate** | **94.5%** | 91.6% |
+| **Avg TTFT** | 279ms | **181ms** |
+| **Avg total response** | 883ms | **511ms** |
+| Failed | 167 / 3,024 | 253 / 3,020 |
+| LLM | Cerebras `qwen-3-235b` | Cerebras `qwen-3-235b` |
+| Embeddings | Jina v5 nano (768-dim) | Jina v5 nano (768-dim) |
+| Search | Hybrid HNSW + BM25 + RRF | Hybrid HNSW + BM25 + RRF |
+| Reranker | Jina Reranker v3 | Disabled |
+| Retrieval | 20 → top 3 after reranking | Top 3 from Milvus |
+| Infra | VastAI RTX 4090 (USA) | VastAI RTX 4090 (USA) |
+
+> Reranking adds ~100ms TTFT and ~370ms total but improves accuracy by **+2.9 percentage points** and cuts failures by **34%**. Without reranking, you get sub-200ms TTFT — choose your tradeoff.
+
+---
+
+## Features
+
+- **Sub-200ms TTFT** — first tokens stream back before most APIs even respond
+- **Hybrid search** — dense HNSW vectors + BM25 sparse keywords fused with Reciprocal Rank Fusion
+- **Cross-encoder reranking** — Jina Reranker v3 scores each candidate against the query for precise relevance
+- **SSE streaming** — real-time token streaming with source citations and server-side timing
+- **Multi-format ingestion** — PDF, DOCX, PPTX, XLSX, HTML, TXT, ZIP via Docling (tables, OCR, layout-aware)
+- **Image understanding** — embedded images described by Llama 4 Scout vision model
+- **Contextual retrieval** — optional LLM-generated chunk prefixes for better search recall
+- **Multiple LLM providers** — Groq (LPU) and Cerebras (wafer-scale) with OpenAI-compatible APIs
+- **Built-in eval framework** — 3,045-question benchmark with LLM-as-judge scoring
+- **Single binary** — no Python, no Node.js, no runtime dependencies on the server
+- **Swagger UI** — auto-generated interactive API docs
+- **Collection management** — multiple document collections with backup/export
+
+---
+
+## Use Cases
+
+RustyRAG is built for scenarios where both **speed and accuracy** matter:
+
+- **Voice AI / Conversational Agents** — sub-200ms TTFT means RAG-grounded answers start streaming before the user notices a pause, critical for natural voice interactions
+- **AI Agents** — give your agents a fast, reliable knowledge backend — agents can call RustyRAG as a tool to ground their reasoning in real documents instead of hallucinating
+- **Legal & Compliance** — search across contracts, filings, and policy documents with table-aware extraction and precise reranking
+- **Research & Academic** — query thousands of papers with hybrid search that catches both semantic meaning and exact terminology
+- **Internal Knowledge Bases** — drop in PDFs, docs, and spreadsheets — get an instant Q&A system with no training required
+- **Real-time Copilots** — embed RustyRAG behind IDE plugins, dashboards, or Slack bots where latency kills adoption
+
+> If your RAG pipeline adds 2-3 seconds of latency, users won't use it. RustyRAG keeps the full pipeline — retrieval, reranking, and generation — under 1 second.
 
 ---
 
 ## How It Works
 
+### Query Flow
+
 ```
-                           RustyRAG — Full Pipeline
+  User Question
+       │
+       ▼
+  ┌──────────┐     ┌─────────────────────────────────────┐     ┌──────────────┐
+  │  Embed   │────▶│  Milvus Hybrid Search               │────▶│   Reranker   │
+  │ (Jina v5)│     │  Dense HNSW + BM25 Sparse + RRF     │     │  (Jina v3)   │
+  └──────────┘     │  → 20 candidates                    │     │   → Top 3    │
+                   └─────────────────────────────────────┘     └──────┬───────┘
+                                                                      │
+                                                                      ▼
+                                                               ┌──────────────┐
+                                                               │  LLM (SSE)   │
+                                                               │ Groq/Cerebras│
+                                                               └──────┬───────┘
+                                                                      │
+                                                                      ▼
+                                                               Sources + Tokens
+                                                                + Timing (ms)
+```
 
-  ┌──────────────────────────────────────────────────────────────────────┐
-  │                         UPLOAD FLOW                                  │
-  │                                                                      │
-  │  File (.pdf, .docx, .pptx, .xlsx, .html, .txt, .zip)                 │
-  │    │                                                                 │
-  │    ├─ 1. Extract ──────────────────────────► Docling API             │
-  │    │      (tables as markdown, OCR,          (layout-aware, GPU)     │
-  │    │       multi-column linearization)                               │
-  │    │                                                                 │
-  │    ├─ 2. Describe images ──────────────────► Groq (Llama 4 Scout)    │
-  │    │      (embedded images → text)           (vision model, 17B)     │
-  │    │                                                                 │
-  │    ├─ 3. Chunk                                                       │
-  │    │      (sentence-boundary-aware,                                  │
-  │    │       configurable size + overlap)                              │
-  │    │                                                                 │
-  │    ├─ 4. Contextual prefix (opt-in) ───────► LLM API                 │
-  │    │      (1-2 sentence context per chunk)                           │
-  │    │                                                                 │
-  │    ├─ 5. Embed ────────────────────────────► Jina TEI                │
-  │    │      (prefix + chunk → 1024-dim vec)    (local, GPU)            │
-  │    │                                                                 │
-  │    └─ 6. Insert ───────────────────────────► Milvus                  │
-  │           (dense vectors + BM25 sparse)      (HNSW + BM25 index)     │
-  │                                                                      │
-  └──────────────────────────────────────────────────────────────────────┘
+### Upload Flow
 
-  ┌──────────────────────────────────────────────────────────────────────┐
-  │                          QUERY FLOW                                  │
-  │                                                                      │
-  │  User question                                                       │
-  │    │                                                                 │
-  │    ├─ 1. Embed query ──────────────────────► Jina TEI                │
-  │    │                                                                 │
-  │    ├─ 2. Hybrid search ────────────────────► Milvus                  │
-  │    │      Dense HNSW (semantic similarity)                           │
-  │    │      + BM25 sparse (keyword matching)                           │
-  │    │      → Reciprocal Rank Fusion (k=60)                            │
-  │    │      → Top 20 candidates                                        │
-  │    │                                                                 │
-  │    ├─ 3. Rerank ───────────────────────────► Cross-encoder (TEI)     │
-  │    │      Score all 20 with cross-encoder     (gte-reranker, 149M)   │
-  │    │      → Keep top 3                                               │
-  │    │                                                                 │
-  │    ├─ 4. Generate ─────────────────────────► LLM API                 │
-  │    │      Top chunks injected as context       (Cerebras / Groq)     │
-  │    │      → Stream answer via SSE                                    │
-  │    │                                                                 │
-  │    └─ 5. Response                                                    │
-  │           SSE: sources event → LLM tokens → timing event             │
-  │                                                                      │
-  └──────────────────────────────────────────────────────────────────────┘
+```
+  File (.pdf, .docx, .pptx, .xlsx, .html, .txt, .zip)
+       │
+       ├─ 1. Extract ──────────────────► Docling (layout-aware, tables, OCR)
+       │
+       ├─ 2. Describe images ──────────► Groq Llama 4 Scout (vision, 17B)
+       │
+       ├─ 3. Chunk ────────────────────► Sentence-boundary-aware splitting
+       │
+       ├─ 4. Contextual prefix (opt-in) ► LLM generates 1-2 sentence context
+       │
+       ├─ 5. Embed ────────────────────► Jina v5 nano (768-dim vectors)
+       │
+       └─ 6. Insert ───────────────────► Milvus (dense HNSW + BM25 index)
 ```
 
 ### Why reranking matters
 
-Hybrid search retrieves 20 candidates using two complementary signals — dense vectors (semantic meaning) and BM25 (exact keyword matching). But vector similarity and keyword overlap are rough proxies. The cross-encoder reranker reads each candidate alongside the query as a single sequence and produces a precise relevance score. This typically promotes the most relevant chunks and demotes false positives, improving answer quality without increasing LLM context size.
+Hybrid search retrieves 20 candidates using two complementary signals — dense vectors (semantic meaning) and BM25 (exact keyword matching). But vector similarity and keyword overlap are rough proxies. The cross-encoder reranker reads each candidate alongside the query as a single sequence and produces a precise relevance score. This promotes the most relevant chunks and demotes false positives, improving answer quality by **+2.9%** without increasing LLM context size.
 
 ---
 
@@ -272,7 +318,7 @@ RustyRAG uses **Groq** and **Cerebras** for their low-latency inference hardware
 |----------|---------|-------------|
 | `MILVUS_URL` | `http://localhost:19530` | Milvus REST API |
 | `EMBEDDING_API_URL` | `http://localhost:7997/v1/embeddings` | Embedding endpoint |
-| `EMBEDDING_MODEL` | `jinaai/jina-embeddings-v5-text-small-retrieval` | Embedding model |
+| `EMBEDDING_MODEL` | `jinaai/jina-embeddings-v5-text-nano-retrieval` | Embedding model |
 | `RERANKER_API_URL` | *(empty = disabled)* | TEI reranker endpoint |
 | `DOCLING_URL` | `http://localhost:5001` | Docling extraction API |
 | `VISION_MODEL` | `meta-llama/llama-4-scout-17b-16e-instruct` | Vision model for images |
@@ -285,7 +331,7 @@ RustyRAG uses **Groq** and **Cerebras** for their low-latency inference hardware
 | `RERANK_TOP_N` | `3` | Chunks kept after reranking |
 | `CHUNK_SIZE` | `2000` | Max characters per chunk |
 | `CHUNK_OVERLAP` | `200` | Overlap between chunks |
-| `EMBEDDING_DIMENSION` | `1024` | Vector dimensionality |
+| `EMBEDDING_DIMENSION` | `768` | Vector dimensionality |
 | `CORS_ALLOWED_ORIGINS` | *(empty = permissive)* | Comma-separated allowed origins |
 
 See `.env.example` for the full list including Milvus index tuning and contextual retrieval options.
@@ -298,8 +344,8 @@ All services run via Docker Compose:
 
 | Service | Image | Port | Role |
 |---------|-------|------|------|
-| **Embeddings** | `text-embeddings-inference:cuda-1.9` | 7997 | Jina v5 small (1024-dim) |
-| **Reranker** | `text-embeddings-inference:cuda-1.9` | 7998 | GTE reranker ModernBERT (149M) |
+| **Embeddings** | `text-embeddings-inference:cuda-1.9` | 7997 | Jina v5 nano (768-dim) |
+| **Reranker** | `text-embeddings-inference:cuda-1.9` | 7998 | Jina Reranker v3 |
 | **Docling** | `docling-serve-cu128:v1.14.3` | 5001 | Document extraction (PDF/DOCX/PPTX) |
 | **Milvus** | `milvus:v2.5.27` | 19530 | Vector DB (HNSW + BM25) |
 
@@ -340,7 +386,8 @@ static/
 └── chat.html               # Built-in SSE chat + RAG frontend
 docs/
 ├── eval_data.csv           # 3,045 evaluation questions with expected answers
-└── eval_results.json       # Benchmark results from latest eval run
+├── eval_judged_reranker.json    # Benchmark results (with reranker)
+└── eval_judged_no_rerank.json   # Benchmark results (without reranker)
 docker-compose.yml          # Docling + Jina TEI + Reranker + Milvus 2.5
 ```
 
@@ -353,8 +400,8 @@ docker-compose.yml          # Docling + Jina TEI + Reranker + Milvus 2.5
 | **Runtime** | Rust + Tokio + Actix-web 4 | Async web server |
 | **LLM** | Groq (LPU) + Cerebras (wafer-scale) | Low-latency chat completions + SSE streaming |
 | **Vision** | Llama 4 Scout 17B (Groq) | Image descriptions inside documents |
-| **Embeddings** | Jina v5 text small retrieval (TEI) | Local vectorization, 1024-dim |
-| **Reranker** | GTE reranker ModernBERT base (TEI) | Cross-encoder reranking (149M params) |
+| **Embeddings** | Jina v5 text nano retrieval (TEI) | Local vectorization, 768-dim |
+| **Reranker** | Jina Reranker v3 (TEI) | Cross-encoder reranking |
 | **Document extraction** | Docling (IBM) | PDF/DOCX/PPTX tables, OCR, layout analysis |
 | **Vector DB** | Milvus 2.5 (HNSW + BM25) | Hybrid dense + sparse search with RRF |
 | **Chunking** | text-splitter crate | Semantic sentence-boundary-aware splitting |
@@ -382,6 +429,14 @@ curl -X POST http://localhost:8080/api/v1/evals/run -H 'Content-Type: applicatio
 # Judge evaluation results
 python3 scripts/judge_evals.py docs/eval_results.json
 ```
+
+---
+
+## Roadmap
+
+- **95%+ accuracy without reranker** — improve retrieval quality so the fast path (sub-200ms TTFT) matches reranker-level accuracy
+- **99%+ accuracy with reranker** — push the reranker path toward near-perfect on Open RAG Bench through better chunking, contextual retrieval, and prompt tuning
+- **Hosted version** — deploy a managed RustyRAG instance so you can get started with a single API key, no infrastructure required
 
 ---
 

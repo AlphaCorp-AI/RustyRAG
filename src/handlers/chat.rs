@@ -50,8 +50,9 @@ pub(crate) struct RagContext {
     pub system_prompt: String,
 }
 
-/// Embed the query → hybrid search Milvus → rerank → build LLM context.
+/// Embed the query → parallel hybrid search Milvus → rerank → build LLM context.
 ///
+/// Fires BM25 text search concurrently with embedding generation to reduce TTFT.
 /// Returns `Ok(None)` when the collection has no matching documents.
 pub(crate) async fn build_rag_context(
     body: &ChatRagRequest,
@@ -68,16 +69,26 @@ pub(crate) async fn build_rag_context(
 
     let top_n = validated_top_n(body.limit, config.rerank_top_n)?;
 
-    // 1. Embed
-    let query_embedding = embed_query(embeddings, &body.message, body.embedding_type.as_deref())
-        .await?;
+    // 1. Fire embedding + BM25 text search in parallel
+    //    BM25 doesn't need the vector, so we don't wait for embedding.
+    let (embed_result, sparse_result) = tokio::join!(
+        embed_query(embeddings, &body.message, body.embedding_type.as_deref()),
+        async {
+            milvus
+                .text_search(collection, &body.message, config.retrieval_limit)
+                .await
+                .map_err(|e| AppError::MilvusError(e.to_string()))
+        }
+    );
 
-    // 2. Hybrid search (dense + BM25)
-    let hits = milvus
-        .hybrid_search(
+    let query_embedding = embed_result?;
+    let sparse_hits = sparse_result?;
+
+    // 2. Dense search (needs the embedding, so runs after embed completes)
+    let dense_hits = milvus
+        .search(
             collection,
             query_embedding,
-            &body.message,
             config.retrieval_limit,
             Some(SearchOptions {
                 ef: body.milvus_search_ef,
@@ -86,14 +97,28 @@ pub(crate) async fn build_rag_context(
         .await
         .map_err(|e| AppError::MilvusError(e.to_string()))?;
 
+    // 3. RRF merge (k=20 for sharper discrimination)
+    let hits = MilvusClient::rrf_merge(
+        dense_hits,
+        sparse_hits,
+        20.0,
+        config.retrieval_limit as usize,
+    );
+
     if hits.is_empty() {
         return Ok(None);
     }
 
-    // 3. Rerank
-    let hits = rerank_hits(reranker, &body.message, hits, top_n).await?;
+    // 4. Rerank (skip if requested)
+    let hits = if body.skip_reranker {
+        let mut truncated = hits;
+        truncated.truncate(top_n);
+        truncated
+    } else {
+        rerank_hits(reranker, &body.message, hits, top_n).await?
+    };
 
-    // 4. Build context
+    // 5. Build context
     let sources: Vec<RagSource> = hits.iter().map(RagSource::from).collect();
 
     let context = hits
@@ -234,9 +259,8 @@ pub async fn chat_rag(
         }
     };
 
-    let llm_start = Instant::now();
-    let result = llm
-        .chat_with_system(
+    let response = llm
+        .chat_stream_with_system(
             &ctx.system_prompt,
             &body.message,
             &body.model,
@@ -245,15 +269,44 @@ pub async fn chat_rag(
         )
         .await
         .map_err(|e| AppError::LlmError(e.to_string()))?;
-    let ttft_ms = llm_start.elapsed().as_millis() as u64;
+
+    let mut stream = response.bytes_stream();
+    let mut ttft_ms: Option<u64> = None;
+    let mut full_content = String::new();
+    let mut model_name = body.model.clone();
+
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk.map_err(|e| AppError::LlmError(format!("Stream error: {e}")))?;
+        if ttft_ms.is_none() {
+            ttft_ms = Some(request_start.elapsed().as_millis() as u64);
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        for line in text.lines() {
+            if let Some(data) = line.strip_prefix("data: ") {
+                if data == "[DONE]" {
+                    continue;
+                }
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(delta) = v["choices"][0]["delta"]["content"].as_str() {
+                        full_content.push_str(delta);
+                    }
+                    if let Some(m) = v["model"].as_str() {
+                        model_name = m.to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    let ttft = ttft_ms.unwrap_or_else(|| request_start.elapsed().as_millis() as u64);
     let total_ms = request_start.elapsed().as_millis() as u64;
 
     Ok(HttpResponse::Ok().json(ChatRagResponse {
-        model: result.model,
-        message: result.content,
+        model: model_name,
+        message: full_content,
         sources: ctx.sources,
-        usage: result.usage.map(Usage::from),
-        timing: Timing { ttft_ms, total_ms },
+        usage: None,
+        timing: Timing { ttft_ms: ttft, total_ms },
     }))
 }
 
@@ -291,7 +344,7 @@ pub async fn chat_rag_stream(
         })?;
 
     let upstream = llm
-        .chat_stream_with_system(&ctx.system_prompt, &body.message, &body.model, &body.provider)
+        .chat_stream_with_system(&ctx.system_prompt, &body.message, &body.model, &body.provider, Some(1024))
         .await
         .map_err(|e| AppError::LlmError(e.to_string()))?;
 

@@ -1,26 +1,25 @@
+# docker-compose.yml — RTX 4090 on Vast.ai (24 GB VRAM, 16 CPU, 48 GB RAM, 150 GB disk)
+#
+# VRAM budget:
+#   Embeddings (jina-v5-nano):     ~0.5 GB
+#   Reranker (jina-reranker-v3):   ~1.2 GB
+#   Docling:                       ~4 GB
+#   Total:                         ~6 GB / 24 GB
+#
+# LLM inference stays on Cerebras/Groq.
+#
+# Usage:
+#   docker compose up -d --build
+
 services:
   embeddings:
-    image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9
+    build: ./services/embeddings
     container_name: rustyrag_embeddings
     restart: unless-stopped
-    command:
-      [
-        "--model-id",
-        "jinaai/jina-embeddings-v5-text-small-retrieval",
-        "--pooling",
-        "last-token",
-        "--tokenization-workers",
-        "16",
-        "--port",
-        "80",
-        "--auto-truncate",
-        "--max-client-batch-size",
-        "128",
-        "--max-batch-tokens",
-        "131072",
-      ]
     environment:
+      MODEL_ID: "jinaai/jina-embeddings-v5-text-nano-retrieval"
       HF_HOME: /data
+      CUDA_VISIBLE_DEVICES: "0"
     volumes:
       - hf_cache:/data
     ports:
@@ -28,44 +27,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 12G
-          cpus: "8"
-        reservations:
-          memory: 4G
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
-      interval: 20s
-      timeout: 10s
-      retries: 10
-      start_period: 120s
-
-  reranker:
-    image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9
-    container_name: rustyrag_reranker
-    restart: unless-stopped
-    command:
-      [
-        "--model-id",
-        "Alibaba-NLP/gte-reranker-modernbert-base",
-        "--port",
-        "80",
-        "--auto-truncate",
-      ]
-    environment:
-      HF_HOME: /data
-    volumes:
-      - hf_cache:/data
-    ports:
-      - "7998:80"
-    deploy:
-      resources:
-        limits:
-          memory: 8G
-          cpus: "6"
+          memory: 6G
+          cpus: "2"
         reservations:
           memory: 2G
           devices:
@@ -77,7 +40,37 @@ services:
       interval: 20s
       timeout: 10s
       retries: 10
-      start_period: 120s
+      start_period: 180s
+
+  reranker:
+    build: ./services/reranker
+    container_name: rustyrag_reranker
+    restart: unless-stopped
+    environment:
+      MODEL_ID: "jinaai/jina-reranker-v3"
+      HF_HOME: /data
+      CUDA_VISIBLE_DEVICES: "0"
+    volumes:
+      - hf_cache:/data
+    ports:
+      - "7998:80"
+    deploy:
+      resources:
+        limits:
+          memory: 6G
+          cpus: "2"
+        reservations:
+          memory: 2G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
 
   docling:
     image: quay.io/docling-project/docling-serve-cu128:v1.14.3
@@ -88,17 +81,18 @@ services:
       DOCLING_SERVE_HOST: "0.0.0.0"
       DOCLING_SERVE_PORT: "5001"
       DOCLING_SERVE_MAX_SYNC_WAIT: "600"
-      DOCLING_SERVE_ENG_LOC_NUM_WORKERS: "2"
+      DOCLING_SERVE_ENG_LOC_NUM_WORKERS: "4"
       DOCLING_SERVE_ENG_LOC_SHARE_MODELS: "True"
+      CUDA_VISIBLE_DEVICES: "0"
     ports:
       - "5001:5001"
     deploy:
       resources:
         limits:
-          memory: 12G
-          cpus: "8"
+          memory: 14G
+          cpus: "10"
         reservations:
-          memory: 4G
+          memory: 2G
           devices:
             - driver: nvidia
               count: 1
@@ -129,8 +123,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 16G
-          cpus: "8"
+          memory: 12G
+          cpus: "6"
         reservations:
           memory: 4G
     healthcheck:

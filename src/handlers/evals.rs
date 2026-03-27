@@ -1,4 +1,5 @@
 use actix_web::{post, web, HttpResponse};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use utoipa::ToSchema;
@@ -42,6 +43,10 @@ pub struct RunEvalsRequest {
 
     /// Max source chunks per question
     pub limit: Option<i64>,
+
+    /// Skip reranker and use raw Milvus scores
+    #[serde(default)]
+    pub skip_reranker: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -123,7 +128,8 @@ pub async fn run_evals(
             model: model.clone(),
             provider: provider.clone(),
             embedding_type: None,
-            milvus_search_ef: None,
+            milvus_search_ef: Some(64),
+            skip_reranker: body.skip_reranker,
         };
 
         let mut last_err = String::new();
@@ -229,13 +235,14 @@ async fn run_single_question(
     reranker: &RerankerClient,
     config: &Config,
 ) -> Result<(String, u64), AppError> {
+    // Start timer before RAG pipeline for end-to-end TTFT
+    let pipeline_start = Instant::now();
+
     let ctx = build_rag_context(request, embeddings, milvus, reranker, config)
         .await?
         .ok_or_else(|| AppError::BadRequest("No documents found for query".into()))?;
-
-    let llm_start = Instant::now();
-    let result = llm
-        .chat_with_system(
+    let response = llm
+        .chat_stream_with_system(
             &ctx.system_prompt,
             &request.message,
             &request.model,
@@ -245,6 +252,32 @@ async fn run_single_question(
         .await
         .map_err(|e| AppError::LlmError(e.to_string()))?;
 
-    let ttft_ms = llm_start.elapsed().as_millis() as u64;
-    Ok((result.content, ttft_ms))
+    let mut stream = response.bytes_stream();
+    let mut ttft_ms: Option<u64> = None;
+    let mut full_content = String::new();
+
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk.map_err(|e| AppError::LlmError(format!("Stream error: {e}")))?;
+        if ttft_ms.is_none() {
+            ttft_ms = Some(pipeline_start.elapsed().as_millis() as u64);
+        }
+
+        // Parse SSE lines to extract content tokens
+        let text = String::from_utf8_lossy(&bytes);
+        for line in text.lines() {
+            if let Some(data) = line.strip_prefix("data: ") {
+                if data == "[DONE]" {
+                    continue;
+                }
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(delta) = v["choices"][0]["delta"]["content"].as_str() {
+                        full_content.push_str(delta);
+                    }
+                }
+            }
+        }
+    }
+
+    let ttft = ttft_ms.unwrap_or_else(|| pipeline_start.elapsed().as_millis() as u64);
+    Ok((full_content, ttft))
 }

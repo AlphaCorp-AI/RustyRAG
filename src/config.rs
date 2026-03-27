@@ -88,26 +88,26 @@ mod defaults {
     // Services
     pub fn milvus_url() -> String { "http://localhost:19530".into() }
     pub fn embedding_api_url() -> String { "http://localhost:7997/v1/embeddings".into() }
-    pub fn embedding_model() -> String { "jinaai/jina-embeddings-v5-text-small-retrieval".into() }
+    pub fn embedding_model() -> String { "jinaai/jina-embeddings-v5-text-nano-retrieval".into() }
     pub fn docling_url() -> String { "http://localhost:5001".into() }
     pub fn vision_model() -> String { "meta-llama/llama-4-scout-17b-16e-instruct".into() }
 
     // Embedding tuning
-    pub fn embedding_dimension() -> i64 { 1024 }
+    pub fn embedding_dimension() -> i64 { 768 }
     pub fn embedding_max_batch_size() -> usize { 8 }
 
     // Retrieval pipeline
     pub fn retrieval_limit() -> i64 { 20 }
-    pub fn rerank_top_n() -> usize { 3 }
-    pub fn chunk_size() -> usize { 2000 }
-    pub fn chunk_overlap() -> usize { 200 }
+    pub fn rerank_top_n() -> usize { 5 }
+    pub fn chunk_size() -> usize { 1000 }
+    pub fn chunk_overlap() -> usize { 150 }
 
     // Milvus index
     pub fn milvus_metric_type() -> String { "COSINE".into() }
     pub fn milvus_index_type() -> String { "HNSW".into() }
     pub fn milvus_hnsw_m() -> i64 { 16 }
     pub fn milvus_hnsw_ef_construction() -> i64 { 256 }
-    pub fn milvus_search_ef() -> i64 { 64 }
+    pub fn milvus_search_ef() -> i64 { 128 }
 
     // Contextual retrieval
     pub fn contextual_provider() -> String { "groq".into() }

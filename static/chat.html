@@ -61,7 +61,6 @@
     white-space: nowrap;
   }
 
-  .settings-bar input,
   .settings-bar select {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -75,13 +74,8 @@
     transition: border-color 0.15s;
   }
 
-  .settings-bar input:focus,
   .settings-bar select:focus {
     border-color: var(--blue);
-  }
-
-  .settings-bar input::placeholder {
-    color: var(--text-muted);
   }
 
   .settings-bar .rag-badge {
@@ -90,17 +84,8 @@
     border-radius: 4px;
     font-weight: 600;
     letter-spacing: 0.5px;
-    transition: all 0.2s;
-  }
-
-  .settings-bar .rag-badge.active {
     background: rgba(59, 130, 246, 0.2);
     color: var(--blue);
-  }
-
-  .settings-bar .rag-badge.inactive {
-    background: rgba(113, 113, 122, 0.15);
-    color: var(--text-muted);
   }
 
   /* ── Messages ───────────────────────── */
@@ -289,7 +274,7 @@
       <select id="provider"></select>
       <label for="model">Model:</label>
       <select id="model"></select>
-      <span id="rag-badge" class="rag-badge active" title="Toggle Chat/RAG mode">RAG</span>
+      <span class="rag-badge">RAG</span>
     </div>
   </header>
   <div id="messages"></div>
@@ -302,7 +287,6 @@
 </div>
 
 <script>
-const STREAM_API = '/api/v1/chat/stream';
 const RAG_STREAM_API = '/api/v1/chat-rag/stream';
 const LLM_LIST_API = '/api/v1/llms';
 const messagesEl = document.getElementById('messages');
@@ -311,18 +295,10 @@ const sendBtn = document.getElementById('send-btn');
 const form = document.getElementById('input-form');
 const providerEl = document.getElementById('provider');
 const modelEl = document.getElementById('model');
-const ragBadge = document.getElementById('rag-badge');
 let availableModels = [];
-let ragEnabled = true;
 
 providerEl.addEventListener('change', () => {
   renderModelOptions(providerEl.value);
-});
-
-ragBadge.addEventListener('click', () => {
-  ragEnabled = !ragEnabled;
-  ragBadge.textContent = ragEnabled ? 'RAG' : 'CHAT';
-  ragBadge.className = 'rag-badge ' + (ragEnabled ? 'active' : 'inactive');
 });
 
 // Auto-resize textarea
@@ -350,13 +326,7 @@ form.addEventListener('submit', async (e) => {
     return;
   }
 
-  const isRag = ragEnabled;
-
-  // Pick endpoint & body
-  const url = isRag ? RAG_STREAM_API : STREAM_API;
-  const payload = isRag
-    ? { message: text, limit: 3, provider, model }
-    : { message: text, provider, model };
+  const payload = { message: text, limit: 3, provider, model };
 
   // Add user message
   addMessage('user', text);
@@ -367,12 +337,11 @@ form.addEventListener('submit', async (e) => {
   // Create assistant bubble with cursor
   const { bubble, contentSpan } = addAssistantBubble();
 
-  const t0 = performance.now();
-  let ttft = null;
   let sources = null;
+  let serverTiming = null;
 
   try {
-    const res = await fetch(url, {
+    const res = await fetch(RAG_STREAM_API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -388,7 +357,7 @@ form.addEventListener('submit', async (e) => {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    let currentEvent = null; // track SSE event type
+    let currentEvent = null;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -396,19 +365,16 @@ form.addEventListener('submit', async (e) => {
 
       buffer += decoder.decode(value, { stream: true });
 
-      // Process complete SSE lines
       const lines = buffer.split('\n');
-      buffer = lines.pop(); // keep incomplete line in buffer
+      buffer = lines.pop();
 
       for (const line of lines) {
-        // Track named events (e.g. "event: sources")
         if (line.startsWith('event: ')) {
           currentEvent = line.slice(7).trim();
           continue;
         }
 
         if (!line.startsWith('data: ')) {
-          // Empty line resets event type per SSE spec
           if (line.trim() === '') currentEvent = null;
           continue;
         }
@@ -416,11 +382,16 @@ form.addEventListener('submit', async (e) => {
         const payloadStr = line.slice(6).trim();
         if (payloadStr === '[DONE]') continue;
 
-        // Handle custom "sources" event from RAG stream
+        // Handle sources event
         if (currentEvent === 'sources') {
-          try {
-            sources = JSON.parse(payloadStr);
-          } catch (_) {}
+          try { sources = JSON.parse(payloadStr); } catch (_) {}
+          currentEvent = null;
+          continue;
+        }
+
+        // Handle timing event from server
+        if (currentEvent === 'timing') {
+          try { serverTiming = JSON.parse(payloadStr); } catch (_) {}
           currentEvent = null;
           continue;
         }
@@ -430,21 +401,21 @@ form.addEventListener('submit', async (e) => {
           const json = JSON.parse(payloadStr);
           const delta = json.choices?.[0]?.delta?.content;
           if (delta) {
-            if (ttft === null) ttft = performance.now() - t0;
             contentSpan.textContent += delta;
             messagesEl.scrollTop = messagesEl.scrollHeight;
           }
-        } catch (_) { /* skip malformed JSON */ }
+        } catch (_) {}
       }
     }
 
-    const totalMs = performance.now() - t0;
-
-    // Remove cursor, add timing metadata
     removeCursor(bubble);
-    addMeta(bubble, ttft, totalMs);
 
-    // Show sources panel if RAG
+    // Add timing from server response
+    if (serverTiming) {
+      addMeta(bubble, serverTiming.ttft_ms, serverTiming.total_ms);
+    }
+
+    // Show sources panel
     if (sources && sources.length > 0) {
       addSourcesPanel(bubble, sources);
     }
@@ -485,16 +456,14 @@ function removeCursor(bubble) {
   if (c) c.remove();
 }
 
-function addMeta(bubble, ttft, totalMs) {
+function addMeta(bubble, ttftMs, totalMs) {
   const meta = document.createElement('div');
   meta.className = 'meta';
-  if (ttft !== null) {
-    const s1 = document.createElement('span');
-    s1.textContent = `TTFT: ${(ttft / 1000).toFixed(2)}s`;
-    meta.appendChild(s1);
-  }
+  const s1 = document.createElement('span');
+  s1.textContent = `TTFT: ${ttftMs}ms`;
+  meta.appendChild(s1);
   const s2 = document.createElement('span');
-  s2.textContent = `Total: ${(totalMs / 1000).toFixed(2)}s`;
+  s2.textContent = `Total: ${totalMs}ms`;
   meta.appendChild(s2);
   bubble.appendChild(meta);
 }
@@ -517,7 +486,7 @@ function addSourcesPanel(bubble, sources) {
 
     const file = document.createElement('span');
     file.className = 'source-file';
-    file.textContent = src.source_file;
+    file.textContent = src.file_name;
 
     const score = document.createElement('span');
     score.className = 'source-score';

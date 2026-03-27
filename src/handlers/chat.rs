@@ -253,9 +253,10 @@ pub async fn chat_rag(
         }
     };
 
+    // Use streaming to measure real TTFT (time to first token)
     let llm_start = Instant::now();
-    let result = llm
-        .chat_with_system(
+    let response = llm
+        .chat_stream_with_system(
             &ctx.system_prompt,
             &body.message,
             &body.model,
@@ -264,15 +265,44 @@ pub async fn chat_rag(
         )
         .await
         .map_err(|e| AppError::LlmError(e.to_string()))?;
-    let ttft_ms = llm_start.elapsed().as_millis() as u64;
+
+    let mut stream = response.bytes_stream();
+    let mut ttft_ms: Option<u64> = None;
+    let mut full_content = String::new();
+    let mut model_name = body.model.clone();
+
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk.map_err(|e| AppError::LlmError(format!("Stream error: {e}")))?;
+        if ttft_ms.is_none() {
+            ttft_ms = Some(llm_start.elapsed().as_millis() as u64);
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        for line in text.lines() {
+            if let Some(data) = line.strip_prefix("data: ") {
+                if data == "[DONE]" {
+                    continue;
+                }
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(delta) = v["choices"][0]["delta"]["content"].as_str() {
+                        full_content.push_str(delta);
+                    }
+                    if let Some(m) = v["model"].as_str() {
+                        model_name = m.to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    let ttft = ttft_ms.unwrap_or_else(|| llm_start.elapsed().as_millis() as u64);
     let total_ms = request_start.elapsed().as_millis() as u64;
 
     Ok(HttpResponse::Ok().json(ChatRagResponse {
-        model: result.model,
-        message: result.content,
+        model: model_name,
+        message: full_content,
         sources: ctx.sources,
-        usage: result.usage.map(Usage::from),
-        timing: Timing { ttft_ms, total_ms },
+        usage: None,
+        timing: Timing { ttft_ms: ttft, total_ms },
     }))
 }
 

@@ -25,7 +25,7 @@ use crate::services::milvus::{DocumentChunk, MilvusClient, SearchOptions, DEFAUL
 use super::chat::validate_collection_name;
 
 const INSERT_BATCH_SIZE: usize = 50;
-const CONCURRENT_FILES: usize = 4;
+const CONCURRENT_FILES: usize = 6;
 
 // ── Upload endpoint ────────────────────────────────────────────────
 

@@ -1,7 +1,7 @@
 FROM nvidia/cuda:12.8.0-runtime-ubuntu24.04
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends python3 python3-pip && \
+    apt-get install -y --no-install-recommends python3 python3-pip gcc && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

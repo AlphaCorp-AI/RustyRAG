@@ -259,8 +259,6 @@ pub async fn chat_rag(
         }
     };
 
-    // Use streaming to measure real TTFT (time to first token)
-    let llm_start = Instant::now();
     let response = llm
         .chat_stream_with_system(
             &ctx.system_prompt,
@@ -280,7 +278,7 @@ pub async fn chat_rag(
     while let Some(chunk) = stream.next().await {
         let bytes = chunk.map_err(|e| AppError::LlmError(format!("Stream error: {e}")))?;
         if ttft_ms.is_none() {
-            ttft_ms = Some(llm_start.elapsed().as_millis() as u64);
+            ttft_ms = Some(request_start.elapsed().as_millis() as u64);
         }
         let text = String::from_utf8_lossy(&bytes);
         for line in text.lines() {
@@ -300,7 +298,7 @@ pub async fn chat_rag(
         }
     }
 
-    let ttft = ttft_ms.unwrap_or_else(|| llm_start.elapsed().as_millis() as u64);
+    let ttft = ttft_ms.unwrap_or_else(|| request_start.elapsed().as_millis() as u64);
     let total_ms = request_start.elapsed().as_millis() as u64;
 
     Ok(HttpResponse::Ok().json(ChatRagResponse {

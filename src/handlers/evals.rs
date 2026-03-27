@@ -235,12 +235,12 @@ async fn run_single_question(
     reranker: &RerankerClient,
     config: &Config,
 ) -> Result<(String, u64), AppError> {
+    // Start timer before RAG pipeline for end-to-end TTFT
+    let pipeline_start = Instant::now();
+
     let ctx = build_rag_context(request, embeddings, milvus, reranker, config)
         .await?
         .ok_or_else(|| AppError::BadRequest("No documents found for query".into()))?;
-
-    // Use streaming to measure real TTFT (time to first token)
-    let llm_start = Instant::now();
     let response = llm
         .chat_stream_with_system(
             &ctx.system_prompt,
@@ -259,7 +259,7 @@ async fn run_single_question(
     while let Some(chunk) = stream.next().await {
         let bytes = chunk.map_err(|e| AppError::LlmError(format!("Stream error: {e}")))?;
         if ttft_ms.is_none() {
-            ttft_ms = Some(llm_start.elapsed().as_millis() as u64);
+            ttft_ms = Some(pipeline_start.elapsed().as_millis() as u64);
         }
 
         // Parse SSE lines to extract content tokens
@@ -278,6 +278,6 @@ async fn run_single_question(
         }
     }
 
-    let ttft = ttft_ms.unwrap_or_else(|| llm_start.elapsed().as_millis() as u64);
+    let ttft = ttft_ms.unwrap_or_else(|| pipeline_start.elapsed().as_millis() as u64);
     Ok((full_content, ttft))
 }

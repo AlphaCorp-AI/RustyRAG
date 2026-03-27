@@ -5,7 +5,11 @@ import asyncio
 from contextlib import asynccontextmanager
 from functools import partial
 
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+
 import torch
+torch.set_float32_matmul_precision("high")
 from fastapi import FastAPI, Response
 from pydantic import BaseModel
 

@@ -124,7 +124,7 @@ pub async fn run_evals(
             model: model.clone(),
             provider: provider.clone(),
             embedding_type: None,
-            milvus_search_ef: None,
+            milvus_search_ef: Some(64),
         };
 
         let mut last_err = String::new();

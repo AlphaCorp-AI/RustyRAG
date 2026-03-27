@@ -23,7 +23,7 @@ async def lifespan(app: FastAPI):
     model = AutoModel.from_pretrained(
         MODEL_ID,
         trust_remote_code=True,
-        torch_dtype="auto",
+        torch_dtype=torch.float16 if DEVICE == "cuda" else torch.float32,
     )
     model.to(DEVICE)
     model.eval()

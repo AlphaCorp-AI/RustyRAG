@@ -29,8 +29,10 @@ async def lifespan(app: FastAPI):
     )
     model.to(DEVICE)
     model.eval()
+    if DEVICE == "cuda":
+        model = torch.compile(model)
 
-    # Warmup
+    # Warmup — triggers torch.compile tracing + CUDA kernel gen
     if DEVICE == "cuda":
         with torch.inference_mode():
             dummy = tokenizer(["warmup"], padding=True, truncation=True, max_length=64, return_tensors="pt").to(DEVICE)

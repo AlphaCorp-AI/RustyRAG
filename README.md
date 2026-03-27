@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/rustyrag_logo.png" alt="RustyRAG Logo" width="200"/>
+
 # RustyRAG
 
 ### The fastest open-source RAG API on GitHub

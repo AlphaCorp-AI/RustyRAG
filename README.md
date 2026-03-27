@@ -2,7 +2,7 @@
 
 <img src="docs/rustyrag_logo.png" alt="RustyRAG Logo" width="200"/>
 
-# RustyRAG
+<br/>
 
 ### The fastest open-source RAG API on GitHub
 

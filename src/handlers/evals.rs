@@ -43,6 +43,10 @@ pub struct RunEvalsRequest {
 
     /// Max source chunks per question
     pub limit: Option<i64>,
+
+    /// Skip reranker and use raw Milvus scores
+    #[serde(default)]
+    pub skip_reranker: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -125,6 +129,7 @@ pub async fn run_evals(
             provider: provider.clone(),
             embedding_type: None,
             milvus_search_ef: Some(64),
+            skip_reranker: body.skip_reranker,
         };
 
         let mut last_err = String::new();

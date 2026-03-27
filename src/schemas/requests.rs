@@ -73,6 +73,10 @@ pub struct ChatRagRequest {
     /// Optional override for Milvus search `ef` parameter
     #[schema(example = 64)]
     pub milvus_search_ef: Option<i64>,
+
+    /// Skip reranker and use raw Milvus scores
+    #[serde(default)]
+    pub skip_reranker: bool,
 }
 
 /// Schema-only struct so Swagger renders a file picker for the upload endpoint.

@@ -109,8 +109,14 @@ pub(crate) async fn build_rag_context(
         return Ok(None);
     }
 
-    // 4. Rerank
-    let hits = rerank_hits(reranker, &body.message, hits, top_n).await?;
+    // 4. Rerank (skip if requested)
+    let hits = if body.skip_reranker {
+        let mut truncated = hits;
+        truncated.truncate(top_n);
+        truncated
+    } else {
+        rerank_hits(reranker, &body.message, hits, top_n).await?
+    };
 
     // 5. Build context
     let sources: Vec<RagSource> = hits.iter().map(RagSource::from).collect();

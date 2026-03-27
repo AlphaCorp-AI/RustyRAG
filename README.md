@@ -6,7 +6,7 @@
 
 ### The fastest open-source RAG API on GitHub
 
-Sub-200ms time-to-first-token. Hybrid search + cross-encoder reranking + streaming answers from the fastest LLM providers on the planet. Written in Rust. No GPU required for the server.
+Sub-200ms time-to-first-token. Hybrid search + cross-encoder reranking + streaming answers from the fastest LLM providers on the planet. Written in Rust.
 
 <br/>
 

@@ -444,7 +444,7 @@ python3 scripts/judge_evals.py docs/eval_results.json
 
 ## License
 
-MIT
+[Elastic License 2.0 (ELv2)](LICENSE)
 
 ---
 
